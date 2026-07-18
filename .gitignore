@@ -1,0 +1,31 @@
+# ── secrets & live config (never commit) ──
+settings.json
+data/contacts.json
+
+# ── runtime output ──
+reports/
+logs/
+uploads/
+
+# ── WhatsApp bridge (generated, holds a live session) ──
+whatsapp_bridge.js
+package.json
+package-lock.json
+node_modules/
+wa_session/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

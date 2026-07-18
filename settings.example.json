@@ -1,0 +1,40 @@
+{
+  "ai_backend": "ollama",
+  "ollama_url": "http://localhost:11434",
+  "ollama_model": "llama3.2",
+  "claude_api_key": "",
+
+  "email_user": "",
+  "email_password": "",
+  "imap_host": "imap.gmail.com",
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "report_recipients": [],
+  "erp_folder": "",
+
+  "email_dept_map": {
+    "ran@example.com":         "ran",
+    "core@example.com":        "core",
+    "quality@example.com":     "quality",
+    "safety@example.com":      "safety",
+    "civil@example.com":       "civil",
+    "supply@example.com":      "supply",
+    "erp@example.com":         "cost",
+    "primavera@example.com":   "pmo",
+    "contracts@example.com":   "contract",
+    "procurement@example.com": "procure",
+    "hr@example.com":          "hr",
+    "pmo@example.com":         "pmo",
+    "risk@example.com":        "risk",
+    "it@example.com":          "it"
+  },
+
+  "whatsapp_groups": {
+    "+100000000001": "ran",
+    "+100000000002": "core",
+    "+100000000003": "quality",
+    "+100000000004": "safety",
+    "+100000000005": "civil",
+    "+100000000006": "supply"
+  }
+}
