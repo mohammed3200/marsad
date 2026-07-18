@@ -13,6 +13,15 @@ default-gray one.
 
 ## Changes
 
+0. **Fix a pre-existing crash (do this first).** In `_build` (~349), the search box wires a var trace
+   **before** the employee table `self._tbl` exists:
+   - line ~397 `self._search_var.trace("w", self._on_search)`
+   - line ~402 `se.insert(0, ph_text)` mutates the traced var → fires `_on_search` → `_refresh_table`
+     → `self._tbl.delete(...)` → `AttributeError: 'ContactsTab' object has no attribute '_tbl'`.
+   Fix by ordering: build the table (`self._tbl`) **before** inserting the placeholder / registering
+   the trace, **or** guard `_refresh_table`/`_on_search` with `if not hasattr(self, "_tbl"): return`.
+   Verify the contacts tab builds with no traceback before doing the styling below.
+
 1. **Share the design tokens.** `contacts_manager.py` currently hardcodes its own colors (e.g. dept
    colors in `data/contacts.json`, inline widget colors). Import the palette from `app.py`:
    ```python

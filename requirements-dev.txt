@@ -1,0 +1,4 @@
+# Dev-only tooling (not needed to run the app).
+# Used by tools/capture_screenshots.py to grab per-tab PNGs for the README.
+
+python-xlib>=0.33   # direct X-window capture (root-framebuffer grab is black on headless X)

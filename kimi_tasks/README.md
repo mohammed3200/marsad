@@ -39,6 +39,10 @@ scope. Run them in order because later tasks depend on the token system and fact
   empty box.
 - **RTL:** right-align label text (`anchor="e"`, `justify="right"`); mirror two-column layouts so the
   primary column sits on the **right**; order button rows so the primary action is rightmost.
+  **Note (verified by screenshot):** Tk on this system already shapes and orders Arabic glyphs
+  correctly inside labels — RTL here is about *layout direction* (which side columns/buttons sit on),
+  **not** character reshaping. Do **not** blanket-apply the `rtl()` helper; only reach for it if a
+  specific widget visibly renders Arabic backwards, which is rare.
 - Reuse the factories from task 01 (`_pill`, `_card`, `_kpi_tile`, `_btn`) instead of hand-building
   styled `tk.Button`/`tk.Label`/`tk.Frame` with inline `bg=/fg=/font=`.
 
