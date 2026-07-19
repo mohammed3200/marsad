@@ -75,11 +75,25 @@ cp settings.example.json settings.json                   # then edit it
 python app.py
 ```
 
-### Standalone binaries
+### Installers (from the Releases page)
 
-- **Linux:** `bash tools/build_linux.sh` → `dist/marsad` (needs `patchelf`: `sudo apt install patchelf`).
-- **Windows `.exe` / Linux binary via CI:** push a `v*` tag — `.github/workflows/build.yml` builds both
-  with `pyside6-deploy` and attaches them to the GitHub release.
+Grab a prebuilt package from the [latest release](https://github.com/mohammed3200/marsad/releases/latest):
+
+- **Windows:** `marsad-setup-<version>.exe` (NSIS installer) or `marsad-<version>-portable.exe` (portable, no install).
+- **Debian / Ubuntu:** `marsad_<version>_amd64.deb` — `sudo apt install ./marsad_<version>_amd64.deb`.
+
+Build them yourself with **PyInstaller**:
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller marsad.spec                       # → dist/marsad/
+bash packaging/linux/build_deb.sh 1.0.0       # → dist/marsad_1.0.0_amd64.deb  (needs dpkg-deb)
+```
+
+Windows installers are built in CI: pushing a `v*` tag runs `.github/workflows/build.yml`, which builds
+the NSIS installer + portable `.exe` (Windows) and the `.deb` (Linux) and attaches them to the release.
+An installed app keeps its config, reports, and contacts under a per-user data dir
+(`%APPDATA%/marsad`, `~/.local/share/marsad`).
 
 ## Connect a backend
 

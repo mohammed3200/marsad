@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Build a standalone Linux binary of marsad with pyside6-deploy (Nuitka).
-# Requires: gcc, patchelf  (Debian/Ubuntu: sudo apt install patchelf)
-# Output: dist/marsad
+# Build the Linux binary (PyInstaller onedir) and a .deb package.
+# Requires: pip deps + pyinstaller, dpkg-deb.
+# Output: dist/marsad/  and  dist/marsad_<version>_amd64.deb
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if ! command -v patchelf >/dev/null 2>&1; then
-  echo "error: patchelf not found — install it (e.g. 'sudo apt install patchelf')" >&2
-  exit 1
-fi
+VERSION="${1:-1.0.0}"
 
-python3 -m pip install --user --quiet nuitka
-python3 -m PySide6.scripts.pyside_tool deploy -c pysidedeploy.spec --force || \
-  pyside6-deploy -c pysidedeploy.spec --force
+python3 -m pip install --user --quiet pyinstaller
+pyinstaller --noconfirm marsad.spec
+bash packaging/linux/build_deb.sh "$VERSION"
 
-echo "built: dist/marsad"
+echo "done: dist/marsad/  +  dist/marsad_${VERSION}_amd64.deb"

@@ -8,11 +8,12 @@ consumer (exporters, dashboard) reads.
 """
 import json
 import datetime
-from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-REPORTS  = BASE_DIR / "reports"
-REPORTS.mkdir(exist_ok=True)
+from .paths import DATA_DIR
+
+BASE_DIR = DATA_DIR
+REPORTS  = DATA_DIR / "reports"
+REPORTS.mkdir(parents=True, exist_ok=True)
 
 
 # ════════════════════════════════════════════════════

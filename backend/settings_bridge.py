@@ -4,11 +4,11 @@ Keys: ai_backend, ollama_url, ollama_model, claude_api_key, claude_model,
 email_dept_map, whatsapp_groups (+ optional email/erp connector config).
 """
 import json
-from pathlib import Path
 
-BASE_DIR    = Path(__file__).resolve().parent.parent
-SETTINGS_F  = BASE_DIR / "settings.json"
-EXAMPLE_F   = BASE_DIR / "settings.example.json"
+from core.paths import DATA_DIR, BUNDLE_DIR
+
+SETTINGS_F  = DATA_DIR / "settings.json"       # writable per-user config
+EXAMPLE_F   = BUNDLE_DIR / "settings.example.json"  # shipped template / seed
 
 _DEFAULTS = {
     "ai_backend":      "ollama",

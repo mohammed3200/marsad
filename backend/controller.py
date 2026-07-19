@@ -12,14 +12,14 @@ from PySide6.QtCore import QObject, Signal, Slot, Property, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
 
 from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel
+from core.paths import DATA_DIR, BUNDLE_DIR
 from connectors import ConnectorHub, build_report_html
 from .settings_bridge import load_settings, save_settings
 from .models import AgentsModel, ReportsModel
 from .analysis_worker import AnalysisWorker
 
-BASE_DIR   = Path(__file__).resolve().parent.parent
-REPORTS    = BASE_DIR / "reports"
-SAMPLES_F  = BASE_DIR / "sample_reports.json"
+REPORTS    = DATA_DIR / "reports"                  # writable output
+SAMPLES_F  = BUNDLE_DIR / "sample_reports.json"    # shipped demo input
 LATEST_F   = REPORTS / "latest.json"
 
 

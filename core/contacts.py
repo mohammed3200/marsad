@@ -6,9 +6,10 @@ widgets). `export_to_config()` produces the email→dept / whatsapp→dept maps 
 connectors use for routing.
 """
 import json
-from pathlib import Path
 
-CONTACTS_FILE = Path(__file__).resolve().parent.parent / "data" / "contacts.json"
+from .paths import DATA_DIR
+
+CONTACTS_FILE = DATA_DIR / "data" / "contacts.json"
 
 DEFAULT_STRUCTURE = {
     "الإدارة الفنية / التشغيلية": {

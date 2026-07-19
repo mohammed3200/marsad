@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=marsad
+GenericName=Project Intelligence
+Comment=LTT 4G/5G project-management intelligence
+Exec=/opt/marsad/marsad
+Icon=marsad
+Terminal=false
+Categories=Office;ProjectManagement;Utility;
+StartupWMClass=marsad

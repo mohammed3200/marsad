@@ -5,48 +5,95 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-jobs:
-  build:
-    name: Build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact: marsad-windows
-            binary: dist/marsad.exe
-          - os: ubuntu-latest
-            artifact: marsad-linux
-            binary: dist/marsad
+permissions:
+  contents: write
 
+jobs:
+  linux:
+    name: Linux (.deb)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install patchelf (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y patchelf libegl1 libxkbcommon0
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y
+             libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 dpkg-dev
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt nuitka
+          pip install -r requirements.txt pyinstaller
 
-      - name: Build with pyside6-deploy
-        run: pyside6-deploy -c pysidedeploy.spec --force
+      - name: Version from tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Build (PyInstaller onedir)
+        run: pyinstaller --noconfirm marsad.spec
+
+      - name: Package .deb
+        run: bash packaging/linux/build_deb.sh "${{ steps.v.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          name: marsad-deb
+          path: dist/*.deb
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.binary }}
+          files: dist/*.deb
+
+  windows:
+    name: Windows (NSIS + portable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Version from tag
+        id: v
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build onedir (for installer)
+        run: pyinstaller --noconfirm marsad.spec
+
+      - name: Build onefile (portable)
+        env:
+          MARSAD_ONEFILE: "1"
+        run: |
+          pyinstaller --noconfirm --distpath dist/portable marsad.spec
+          copy dist\portable\marsad.exe dist\marsad-${{ steps.v.outputs.version }}-portable.exe
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build NSIS installer
+        run: '& "C:\Program Files (x86)\NSIS\makensis.exe" -DVERSION=${{ steps.v.outputs.version }} packaging\windows\marsad.nsi'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marsad-windows
+          path: |
+            dist/marsad-setup-*.exe
+            dist/marsad-*-portable.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/marsad-setup-*.exe
+            dist/marsad-*-portable.exe

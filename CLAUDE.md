@@ -92,7 +92,14 @@ properties → `QQuickView` loads `qml/Main.qml`.
 
 ## Packaging
 
-`requirements.txt` (source install) + `pysidedeploy.spec` (`pyside6-deploy`/Nuitka) build a standalone
-binary bundling `qml/` + `assets/`. `tools/build_linux.sh` builds locally (needs `patchelf`);
-`.github/workflows/build.yml` builds the Windows `.exe` + Linux binary on a `v*` tag.
+**PyInstaller** (`marsad.spec`) builds `dist/marsad/` bundling `qml/` + `assets/` + seed configs;
+`collect_all('PySide6')` is trimmed by an exclude filter (drops WebEngine/Quick3D/Charts/… to keep the
+bundle ~200 MB). Onefile portable via `MARSAD_ONEFILE=1 pyinstaller marsad.spec`.
+`packaging/windows/marsad.nsi` (NSIS) → installer `.exe`; `packaging/linux/build_deb.sh` → `.deb`.
+`.github/workflows/build.yml` (needs `permissions: contents: write`) builds the Windows NSIS installer +
+portable `.exe` and the Linux `.deb` on a `v*` tag and attaches them to the release.
 `tools/capture_qt.py` renders per-page PNGs offscreen (`QT_QPA_PLATFORM=offscreen`).
+
+**Frozen paths:** `core/paths.py` splits `BUNDLE_DIR` (read-only bundled assets) from `DATA_DIR`
+(writable per-user state — `%APPDATA%/marsad`, `~/.local/share/marsad`). All state (settings, reports,
+contacts, logs) uses `DATA_DIR`; never write next to the executable.

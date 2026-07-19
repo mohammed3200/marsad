@@ -26,8 +26,12 @@ from email.mime.multipart   import MIMEMultipart
 from email.mime.application import MIMEApplication
 from pathlib import Path
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+try:
+    from core.paths import DATA_DIR as _DATA_DIR
+    LOG_DIR = _DATA_DIR / "logs"
+except Exception:  # pragma: no cover — core not importable in isolation
+    LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     filename=str(LOG_DIR / "connectors.log"),

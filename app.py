@@ -15,10 +15,10 @@ from PySide6.QtCore import Qt, QUrl
 
 from backend.theme import Theme
 from backend.controller import AppController
+from core.paths import BUNDLE_DIR
 
-BASE_DIR = Path(__file__).resolve().parent
-QML_DIR  = BASE_DIR / "qml"
-FONT_DIR = BASE_DIR / "assets" / "fonts"
+QML_DIR  = BUNDLE_DIR / "qml"
+FONT_DIR = BUNDLE_DIR / "assets" / "fonts"
 
 
 def load_fonts():
