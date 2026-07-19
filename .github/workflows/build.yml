@@ -81,7 +81,7 @@ jobs:
         run: choco install nsis --no-progress -y
 
       - name: Build NSIS installer
-        run: '& "C:\Program Files (x86)\NSIS\makensis.exe" -DVERSION=${{ steps.v.outputs.version }} packaging\windows\marsad.nsi'
+        run: '& "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=${{ steps.v.outputs.version }}" "packaging\windows\marsad.nsi"'
 
       - uses: actions/upload-artifact@v4
         with:
