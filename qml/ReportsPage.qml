@@ -1,0 +1,98 @@
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls.Basic
+
+PageFrame {
+    id: pg
+    title: "التقارير"
+    subtitle: "تصدير تقرير الحالة الحالي بصيغة PDF أو Excel، أو إرساله بالبريد"
+
+    readonly property bool hasResults: app.dashModel && app.dashModel.overall_health !== undefined
+    property string notice: ""
+
+    Connections {
+        target: app
+        function onExportDone(path) { pg.notice = "حُفظ الملف: " + path }
+        function onExportFailed(msg) { pg.notice = "تعذّر التصدير: " + msg }
+    }
+
+    EmptyState {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 160
+        visible: !pg.hasResults
+        icon: "▢"
+        message: "لا يوجد تقرير للتصدير"
+        hint: "شغّل التحليل من «التحليل والوكلاء» أولاً"
+    }
+
+    ColumnLayout {
+        Layout.fillWidth: true
+        visible: pg.hasResults
+        spacing: 16
+
+        ReportSection { title: "تصدير التقرير الحالي" }
+
+        // meta line
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 9
+            Text {
+                text: "الحالة العامة"
+                font.family: Theme.fonts.body; font.pixelSize: 14; color: Theme.colors.ink2
+            }
+            Rectangle {
+                width: 8; height: 8; radius: 4
+                color: Theme.statusColor(pg.hasResults ? app.dashModel.overall_health : "")
+                Layout.alignment: Qt.AlignVCenter
+            }
+            Text {
+                text: pg.hasResults ? app.dashModel.overall_health : "—"
+                font.family: Theme.fonts.display; font.pixelSize: 15; font.bold: true
+                color: Theme.statusColor(pg.hasResults ? app.dashModel.overall_health : "")
+            }
+            Item { Layout.fillWidth: true }
+            Text {
+                text: app.reportDate
+                font.family: Theme.fonts.mono; font.pixelSize: 12; color: Theme.colors.ink3
+                LayoutMirroring.enabled: false
+            }
+        }
+
+        // export actions
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            AppButton { text: "تصدير PDF"; kind: "accent"; onClicked: app.exportPdf("") }
+            AppButton { text: "تصدير Excel"; kind: "accent"; onClicked: app.exportExcel("") }
+            AppButton { text: "فتح مجلد التقارير"; kind: "ghost"; onClicked: app.openReportsFolder() }
+            Item { Layout.fillWidth: true }
+        }
+
+        Text {
+            text: pg.notice
+            visible: pg.notice !== ""
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight
+            font.family: Theme.fonts.body; font.pixelSize: 12; color: Theme.colors.ink2
+        }
+    }
+
+    // email
+    ColumnLayout {
+        Layout.fillWidth: true
+        visible: pg.hasResults
+        spacing: 12
+        ReportSection { title: "الإرسال بالبريد" }
+        Text {
+            Layout.fillWidth: true
+            text: "يُرسَل التقرير إلى المستلمين المضبوطين في الإعدادات (خريطة البريد ← الإدارة)."
+            wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight
+            font.family: Theme.fonts.body; font.pixelSize: 13; color: Theme.colors.ink2
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            AppButton { text: "إرسال تقرير بالبريد"; kind: "ghost"; onClicked: app.sendEmailReport() }
+            Item { Layout.fillWidth: true }
+        }
+    }
+}

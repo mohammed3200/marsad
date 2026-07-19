@@ -1,12 +1,9 @@
-# marsad — LTT PM Intelligence Desktop
-# Python 3.10+  (Tkinter ships with the standard CPython installer)
-# The app also auto-installs these on first run, but pinning them here is preferred.
+# مرصد — marsad — LTT PM Intelligence Desktop
+# Python 3.10+
+# Qt Quick / QML front-end + report exporters. Arabic shaping is handled
+# natively by Qt (HarfBuzz), so no reshaper/bidi packages are needed.
 
-openpyxl>=3.1          # Excel export
-reportlab>=4.0         # PDF export
-arabic-reshaper>=3.0   # Arabic glyph shaping (PDF)
-python-bidi>=0.4.2     # bidirectional (RTL) text ordering
-PyPDF2>=3.0            # read PDF attachments / ERP files
-Pillow>=10.0           # image handling
-python-dotenv>=1.0     # optional .env loading
-schedule>=1.2          # background fetch scheduling
+PySide6>=6.8        # Qt Quick / QML UI runtime
+reportlab>=4.0      # PDF export
+openpyxl>=3.1       # Excel export + reading ERP .xlsx inputs
+PyPDF2>=3.0         # extract text from PDF email/ERP attachments (optional at runtime)

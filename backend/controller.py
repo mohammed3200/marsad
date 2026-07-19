@@ -1,0 +1,309 @@
+"""AppController — the single QObject QML talks to.
+
+Owns settings, the contacts DB, the connector hub, and the AI engine; exposes
+app state (dashboard model, health, connection) as properties and actions as
+slots. Analysis runs on a worker thread; results flow back via signals.
+"""
+import json
+import datetime
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Signal, Slot, Property, QThread, QUrl
+from PySide6.QtGui import QDesktopServices
+
+from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel
+from connectors import ConnectorHub, build_report_html
+from .settings_bridge import load_settings, save_settings
+from .models import AgentsModel, ReportsModel
+from .analysis_worker import AnalysisWorker
+
+BASE_DIR   = Path(__file__).resolve().parent.parent
+REPORTS    = BASE_DIR / "reports"
+SAMPLES_F  = BASE_DIR / "sample_reports.json"
+LATEST_F   = REPORTS / "latest.json"
+
+
+class AppController(QObject):
+    dashModelChanged  = Signal()
+    reportDateChanged = Signal()
+    ollamaChanged     = Signal()
+    busyChanged       = Signal()
+    progress          = Signal(int)
+    logMessage        = Signal(str)
+    analysisDone      = Signal()
+    analysisFailed    = Signal(str)
+    connectionTested  = Signal(bool, str)
+    exportDone        = Signal(str)          # path
+    exportFailed      = Signal(str)
+    reportsChanged    = Signal()
+    notify            = Signal(str)          # transient user message
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._settings = load_settings()
+        self._contacts = ContactsDB()
+        self._hub      = ConnectorHub(self._settings, self._contacts)
+        self._ai       = AIEngine(self._settings)
+        self._agents   = AgentsModel(self)
+        self._reports  = ReportsModel(self)
+        self._results  = {}
+        self._dash     = {}
+        self._date     = ""
+        self._busy     = False
+        self._online   = False
+        self._status   = "غير متصل"
+        self._thread   = None
+        self._worker   = None
+        self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
+        self._load_latest()
+
+    # ───────────────────────── properties ─────────────────────────
+    @Property("QVariant", notify=dashModelChanged)
+    def dashModel(self):
+        return self._dash
+
+    @Property(str, notify=reportDateChanged)
+    def reportDate(self):
+        return self._date
+
+    @Property(bool, notify=ollamaChanged)
+    def ollamaOnline(self):
+        return self._online
+
+    @Property(str, notify=ollamaChanged)
+    def ollamaStatus(self):
+        return self._status
+
+    @Property(bool, notify=busyChanged)
+    def busy(self):
+        return self._busy
+
+    @Property(QObject, constant=True)
+    def agentsModel(self):
+        return self._agents
+
+    @Property(QObject, constant=True)
+    def reportsModel(self):
+        return self._reports
+
+    @Property(int, notify=reportsChanged)
+    def reportCount(self):
+        return self._reports.count()
+
+    @Property("QVariant", constant=True)
+    def settings(self):
+        return self._settings
+
+    # ───────────────────────── input actions ─────────────────────────
+    @Slot()
+    def loadSamples(self):
+        try:
+            with open(SAMPLES_F, encoding="utf-8") as f:
+                data = json.load(f)
+            reps = data.get("reports", data) if isinstance(data, dict) else data
+            self._reports.extend(reps)
+            self.reportsChanged.emit()
+            self.notify.emit(f"حُمّلت {len(reps)} تقارير نموذجية")
+        except Exception as e:
+            self.notify.emit(f"تعذّر تحميل النماذج: {e}")
+
+    @Slot()
+    def collectReports(self):
+        try:
+            reps = self._hub.collect_all()
+            self._reports.extend(reps)
+            self.reportsChanged.emit()
+            self.notify.emit(f"جُمِّع {len(reps)} تقرير من المصادر"
+                             if reps else "لا توجد تقارير جديدة")
+        except Exception as e:
+            self.notify.emit(f"تعذّر الجمع: {e}")
+
+    @Slot("QVariant")
+    def addReport(self, report):
+        r = dict(report) if report else {}
+        if not r.get("content"):
+            self.notify.emit("أدخل نص التقرير أولاً")
+            return
+        r.setdefault("date", datetime.date.today().isoformat())
+        self._reports.add(r)
+        self.reportsChanged.emit()
+
+    @Slot(int)
+    def removeReport(self, row):
+        self._reports.remove(row)
+        self.reportsChanged.emit()
+
+    @Slot()
+    def clearReports(self):
+        self._reports.clear()
+        self.reportsChanged.emit()
+
+    # ───────────────────────── analysis ─────────────────────────
+    @Slot()
+    def runAnalysis(self):
+        if self._busy:
+            return
+        if self._reports.count() == 0:
+            self.notify.emit("لا توجد تقارير للتحليل — حمّل النماذج أو أضف تقريراً")
+            return
+        self._set_busy(True)
+        self._agents.reset_states()
+        self.progress.emit(0)
+
+        engine = AgentsEngine(self._ai)
+        self._thread = QThread(self)
+        self._worker = AnalysisWorker(engine, self._reports.reports())
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.agentState.connect(self._agents.set_state)
+        self._worker.progress.connect(self.progress)
+        self._worker.log.connect(self.logMessage)
+        self._worker.finished.connect(self._on_analysis_done)
+        self._worker.failed.connect(self._on_analysis_failed)
+        self._thread.start()
+
+    @Slot("QVariant")
+    def _on_analysis_done(self, results):
+        self._results = results or {}
+        self._dash = self._results.get("chief", {})
+        self._date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        self._teardown_thread()
+        self._set_busy(False)
+        self.dashModelChanged.emit()
+        self.reportDateChanged.emit()
+        self.analysisDone.emit()
+        self.notify.emit("اكتمل التحليل — عُرضت النتائج في لوحة التحكم")
+
+    @Slot(str)
+    def _on_analysis_failed(self, msg):
+        self._teardown_thread()
+        self._set_busy(False)
+        self.analysisFailed.emit(msg)
+        self.notify.emit(f"فشل التحليل: {msg}")
+
+    def _teardown_thread(self):
+        if self._thread:
+            self._thread.quit()
+            self._thread.wait()
+            self._thread = None
+            self._worker = None
+
+    # ───────────────────────── reports / export ─────────────────────────
+    @Slot(str)
+    def exportPdf(self, path):
+        self._export(export_pdf, path, ".pdf")
+
+    @Slot(str)
+    def exportExcel(self, path):
+        self._export(export_excel, path, ".xlsx")
+
+    def _export(self, fn, path, ext):
+        if not self._results:
+            self.exportFailed.emit("لا توجد نتائج للتصدير — شغّل التحليل أولاً")
+            return
+        p = self._localfile(path)
+        if not p:
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            p = str(REPORTS / f"marsad_{ts}{ext}")
+        try:
+            out = fn(self._results, p)
+            self.exportDone.emit(out)
+            self.notify.emit(f"حُفظ الملف: {out}")
+        except Exception as e:
+            self.exportFailed.emit(str(e))
+            self.notify.emit(f"تعذّر التصدير: {e}")
+
+    @Slot()
+    def openReportsFolder(self):
+        REPORTS.mkdir(exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(REPORTS)))
+
+    @Slot()
+    def sendEmailReport(self):
+        if not self._results:
+            self.notify.emit("لا توجد نتائج لإرسالها")
+            return
+        recipients = list(self._settings.get("email_dept_map", {}).keys())
+        if not recipients:
+            self.notify.emit("لا يوجد مستلمون مضبوطون في الإعدادات")
+            return
+        try:
+            html = build_report_html(self._results)
+            ok = self._hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
+            self.notify.emit("أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد")
+        except Exception as e:
+            self.notify.emit(f"خطأ في الإرسال: {e}")
+
+    # ───────────────────────── settings / connection ─────────────────────────
+    @Slot()
+    def testConnection(self):
+        ok, msg = self._ai.test_connection()
+        self._online = ok
+        self._status = "متصل" if ok else "غير متصل"
+        self.ollamaChanged.emit()
+        self.connectionTested.emit(ok, msg)
+
+    @Slot("QVariant")
+    def saveSettings(self, values):
+        if values:
+            self._settings.update(dict(values))
+        save_settings(self._settings)
+        self._ai.settings = self._settings
+        self.notify.emit("حُفظت الإعدادات")
+
+    @Slot(result="QVariant")
+    def getSettings(self):
+        return self._settings
+
+    # ───────────────────────── contacts ─────────────────────────
+    @Slot(result="QVariant")
+    def contactsStructure(self):
+        return self._contacts.get_structure()
+
+    @Slot(str, str, result="QVariant")
+    def employeesFor(self, dept, sub_dept):
+        return self._contacts.get_employees(dept or None, sub_dept or None)
+
+    @Slot("QVariant")
+    def addEmployee(self, emp):
+        self._contacts.add_employee(dict(emp))
+
+    @Slot(int, "QVariant")
+    def updateEmployee(self, emp_id, fields):
+        self._contacts.update_employee(emp_id, dict(fields))
+
+    @Slot(int)
+    def deleteEmployee(self, emp_id):
+        self._contacts.delete_employee(emp_id)
+
+    @Slot()
+    def syncContacts(self):
+        maps = self._contacts.export_to_config()
+        self._settings["email_dept_map"] = maps["email_dept_map"]
+        self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
+        save_settings(self._settings)
+        self.notify.emit("تمت مزامنة جهات الاتصال مع الإعدادات")
+
+    # ───────────────────────── internals ─────────────────────────
+    def _set_busy(self, v):
+        self._busy = v
+        self.busyChanged.emit()
+
+    def _load_latest(self):
+        if LATEST_F.exists():
+            try:
+                with open(LATEST_F, encoding="utf-8") as f:
+                    self._results = json.load(f)
+                self._dash = self._results.get("chief", {})
+                ts = datetime.datetime.fromtimestamp(LATEST_F.stat().st_mtime)
+                self._date = ts.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                self._results, self._dash = {}, {}
+
+    @staticmethod
+    def _localfile(path):
+        if not path:
+            return ""
+        if path.startswith("file://"):
+            return QUrl(path).toLocalFile()
+        return path

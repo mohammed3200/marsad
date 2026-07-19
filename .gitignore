@@ -7,6 +7,14 @@ reports/
 logs/
 uploads/
 
+# ── build / packaging artifacts ──
+dist/
+build/
+*.build/
+*.dist/
+*.onefile-build/
+deployment.log
+
 # ── WhatsApp bridge (generated, holds a live session) ──
 whatsapp_bridge.js
 package.json

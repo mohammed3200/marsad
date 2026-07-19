@@ -1,6 +1,9 @@
 """
-وحدة تصدير التقارير — PDF + Excel
-نظام إدارة المشاريع الذكي LTT Desktop
+marsad report exporters — PDF + Excel.
+
+UI-agnostic standalone functions taking (results, output_path). Moved out of the
+root package __init__ so the old root package can be removed. Both read the same
+`results` dict (keyed by agent id) that the dashboard and connectors use.
 """
 import os, datetime
 
