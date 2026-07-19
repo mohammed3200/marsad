@@ -12,15 +12,16 @@ Unicode true
 !define PUBLISHER "LTT PMO"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
+; Paths are relative to this script's directory (packaging\windows) → repo root = ..\..
 Name "مرصد (marsad)"
-OutFile "dist\marsad-setup-${VERSION}.exe"
+OutFile "..\..\dist\marsad-setup-${VERSION}.exe"
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin
 
 !include "MUI2.nsh"
-!define MUI_ICON   "assets\marsad.ico"
-!define MUI_UNICON "assets\marsad.ico"
+!define MUI_ICON   "..\..\assets\marsad.ico"
+!define MUI_UNICON "..\..\assets\marsad.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -34,7 +35,7 @@ RequestExecutionLevel admin
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /r "dist\marsad\*.*"
+  File /r "..\..\dist\marsad\*.*"
 
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortcut  "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\marsad.exe" "" "$INSTDIR\marsad.exe"
