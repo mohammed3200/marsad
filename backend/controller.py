@@ -241,7 +241,7 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def addReport(self, report):
-        r = dict(report) if report else {}
+        r = dict(self._to_py(report) or {})
         if not r.get("content"):
             self.notify.emit("أدخل نص التقرير أولاً")
             return
@@ -378,6 +378,7 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def saveSettings(self, values):
+        values = self._to_py(values)
         if values:
             self._settings.update(dict(values))
         save_settings(self._settings)
@@ -429,11 +430,11 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def addEmployee(self, emp):
-        self._contacts.add_employee(dict(emp))
+        self._contacts.add_employee(dict(self._to_py(emp) or {}))
 
     @Slot(int, "QVariant")
     def updateEmployee(self, emp_id, fields):
-        self._contacts.update_employee(emp_id, dict(fields))
+        self._contacts.update_employee(emp_id, dict(self._to_py(fields) or {}))
 
     @Slot(int)
     def deleteEmployee(self, emp_id):
@@ -524,3 +525,9 @@ class AppController(QObject):
         if path.startswith("file://"):
             return QUrl(path).toLocalFile()
         return path
+
+    @staticmethod
+    def _to_py(v):
+        """كائنات JS القادمة من QML تصل كـ QJSValue في PySide6 — حوّلها إلى
+        قيم بايثون قبل dict() وإلا انهار الاستدعاء بـ TypeError."""
+        return v.toVariant() if hasattr(v, "toVariant") else v

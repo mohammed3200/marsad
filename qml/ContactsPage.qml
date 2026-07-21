@@ -43,6 +43,17 @@ PageFrame {
                 onValueChanged: pg.refreshEmployees()
             }
         }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            AppButton { text: "مزامنة مع الإعدادات"; kind: "ghost"; onClicked: app.syncContacts() }
+            Text {
+                text: "ينسخ توجيه البريد وواتساب ← الأقسام إلى الإعدادات"
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                color: Theme.colors.ink3
+            }
+            Item { Layout.fillWidth: true }
+        }
     }
 
     // ── employees ──
@@ -52,6 +63,7 @@ PageFrame {
         ReportSection { title: "الموظفون" }
         EmptyState {
             Layout.fillWidth: true
+            Layout.preferredHeight: 170
             visible: pg.employees.length === 0
             message: "لا يوجد موظفون في هذا القسم"
             hint: "أضف موظفاً من النموذج بالأسفل"
@@ -130,7 +142,6 @@ PageFrame {
         }
         RowLayout {
             Layout.fillWidth: true
-            Item { Layout.fillWidth: true }
             AppButton {
                 text: "إضافة الموظف"; kind: "accent"
                 enabled: nameF.text !== "" && pg.deptOptions.length > 0
@@ -144,6 +155,7 @@ PageFrame {
                     pg.refreshEmployees()
                 }
             }
+            Item { Layout.fillWidth: true }
         }
         Text {
             text: "لا توجد إدارات في الهيكل التنظيمي بعد — أضِف إدارة أولاً لتتمكن من إضافة موظف"
@@ -151,12 +163,5 @@ PageFrame {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3
         }
-    }
-
-    // ── sync ──
-    RowLayout {
-        Layout.fillWidth: true
-        AppButton { text: "مزامنة مع الإعدادات"; kind: "ghost"; onClicked: app.syncContacts() }
-        Item { Layout.fillWidth: true }
     }
 }

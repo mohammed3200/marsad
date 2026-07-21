@@ -9,7 +9,9 @@ Item {
     property bool hoverable: true
     default property alias content: holder.data
     Layout.fillWidth: true
-    implicitHeight: Math.max(52, holder.childrenRect.height + 20)
+    // size from the slotted child's implicit height — childrenRect includes
+    // y-offsets and feedback-loops with wrapped text, producing overlapping rows
+    implicitHeight: Math.max(52, (holder.children[0] ? holder.children[0].implicitHeight : 32) + 20)
 
     Rectangle {
         anchors.fill: parent

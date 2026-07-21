@@ -6,8 +6,12 @@ Item {
     property string message: ""
     property string hint: ""
     property alias actions: actionHolder.data   // optional buttons row
+    // self-size from content — without this the Item has zero implicit height
+    // and the centred column overflows into neighbouring sections
+    implicitHeight: col.implicitHeight + 24
 
     ColumnLayout {
+        id: col
         anchors.centerIn: parent
         width: Math.max(0, Math.min(parent.width - 48, 440))
         spacing: 9
