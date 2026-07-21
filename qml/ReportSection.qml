@@ -14,7 +14,7 @@ ColumnLayout {
         Rectangle { width: 3; height: 15; radius: 1; color: Theme.colors.accent }
         Text {
             text: title
-            font.family: Theme.fonts.display; font.pixelSize: 17; font.bold: true
+            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
             color: Theme.colors.ink
         }
         Item { Layout.fillWidth: true }

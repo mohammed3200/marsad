@@ -52,9 +52,7 @@ PageFrame {
         ReportSection { title: "الموظفون" }
         EmptyState {
             Layout.fillWidth: true
-            Layout.preferredHeight: 120
             visible: pg.employees.length === 0
-            icon: "☷"
             message: "لا يوجد موظفون في هذا القسم"
             hint: "أضف موظفاً من النموذج بالأسفل"
         }
@@ -73,33 +71,38 @@ PageFrame {
                             spacing: 2
                             Text {
                                 text: modelData.name || "—"
-                                font.family: Theme.fonts.body; font.pixelSize: 14; font.bold: true
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body; font.bold: true
                                 color: Theme.colors.ink
+                                Layout.fillWidth: true; elide: Text.ElideLeft
                             }
                             Text {
                                 text: modelData.position || ""
                                 visible: !!modelData.position
-                                font.family: Theme.fonts.body; font.pixelSize: 12; color: Theme.colors.ink3
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3
+                                Layout.fillWidth: true; elide: Text.ElideLeft
                             }
                         }
                         ColumnLayout {
                             spacing: 2
+                            Layout.maximumWidth: 260
                             Text {
                                 text: modelData.email || ""
-                                font.family: Theme.fonts.mono; font.pixelSize: 12; color: Theme.colors.ink2
+                                font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2
                                 LayoutMirroring.enabled: false
                                 horizontalAlignment: Text.AlignLeft
+                                Layout.fillWidth: true; elide: Text.ElideLeft
                             }
                             Text {
                                 text: modelData.whatsapp || ""
                                 visible: !!modelData.whatsapp
-                                font.family: Theme.fonts.mono; font.pixelSize: 12; color: Theme.colors.ink3
+                                font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3
                                 LayoutMirroring.enabled: false
                                 horizontalAlignment: Text.AlignLeft
+                                Layout.fillWidth: true; elide: Text.ElideLeft
                             }
                         }
                         AppButton {
-                            text: "حذف"; kind: "ghost"; implicitHeight: 30
+                            text: "حذف"; kind: "danger"; implicitHeight: 30
                             onClicked: { app.deleteEmployee(modelData.id); pg.refreshEmployees() }
                         }
                     }
@@ -130,7 +133,7 @@ PageFrame {
             Item { Layout.fillWidth: true }
             AppButton {
                 text: "إضافة الموظف"; kind: "accent"
-                enabled: nameF.text !== ""
+                enabled: nameF.text !== "" && pg.deptOptions.length > 0
                 onClicked: {
                     app.addEmployee({
                         "name": nameF.text, "position": posF.text,
@@ -141,6 +144,12 @@ PageFrame {
                     pg.refreshEmployees()
                 }
             }
+        }
+        Text {
+            text: "لا توجد إدارات في الهيكل التنظيمي بعد — أضِف إدارة أولاً لتتمكن من إضافة موظف"
+            visible: pg.deptOptions.length === 0
+            Layout.fillWidth: true; wrapMode: Text.WordWrap
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3
         }
     }
 

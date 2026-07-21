@@ -19,7 +19,7 @@ Item {
 
         ColumnLayout {
             anchors.centerIn: parent
-            width: Math.min(parent.width - 64, 560)
+            width: Math.max(0, Math.min(parent.width - 64, 560))
             spacing: 20
 
             ColumnLayout {
@@ -71,7 +71,7 @@ Item {
                                 Text {
                                     anchors.centerIn: parent
                                     text: modelData.n
-                                    font.family: Theme.fonts.display; font.pixelSize: 16; font.bold: true
+                                    font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
                                     color: Theme.colors.accent
                                 }
                             }
@@ -106,6 +106,7 @@ Item {
     }
 
     ScrollView {
+        id: scroll
         anchors.fill: parent
         visible: page.hasData
         contentWidth: availableWidth
@@ -113,12 +114,12 @@ Item {
 
         // centered report column
         Item {
-            width: page.width
+            width: scroll.availableWidth
             implicitHeight: column.implicitHeight + 72
 
             ColumnLayout {
                 id: column
-                width: Math.min(840, parent.width - 96)
+                width: Math.max(0, Math.min(840, parent.width - 96))
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: 40
                 spacing: 30
@@ -131,14 +132,14 @@ Item {
                         Layout.fillWidth: true
                         Text {
                             text: "تقرير حالة المشروع"
-                            font.family: Theme.fonts.display; font.pixelSize: 24; font.bold: true
+                            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.display; font.bold: true
                             color: Theme.colors.ink
                         }
                         Item { Layout.fillWidth: true }
                         Text {
                             text: page.reportDate
                             visible: page.reportDate !== ""
-                            font.family: Theme.fonts.mono; font.pixelSize: 12
+                            font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.caption
                             color: Theme.colors.ink3
                             LayoutMirroring.enabled: false
                             Layout.alignment: Qt.AlignVCenter
@@ -156,7 +157,7 @@ Item {
                         spacing: 9
                         Text {
                             text: "الحالة العامة"
-                            font.family: Theme.fonts.body; font.pixelSize: 15
+                            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                             color: Theme.colors.ink2
                         }
                         Rectangle {
@@ -166,7 +167,7 @@ Item {
                         }
                         Text {
                             text: page.health
-                            font.family: Theme.fonts.display; font.pixelSize: 16; font.bold: true
+                            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
                             color: Theme.statusColor(page.health)
                         }
                         Item { Layout.fillWidth: true }
@@ -207,7 +208,7 @@ Item {
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignRight
                         lineHeight: 1.5
-                        font.family: Theme.fonts.body; font.pixelSize: 15
+                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                         color: Theme.colors.ink
                     }
                 }
@@ -232,7 +233,7 @@ Item {
                                     // Arabic-Indic order numeral
                                     Text {
                                         text: page.arabicNumeral(index + 1)
-                                        font.family: Theme.fonts.display; font.pixelSize: 18; font.bold: true
+                                        font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
                                         color: Theme.colors.accent
                                         Layout.alignment: Qt.AlignTop
                                         Layout.topMargin: 1
@@ -245,7 +246,7 @@ Item {
                                             Layout.fillWidth: true
                                             wrapMode: Text.WordWrap
                                             horizontalAlignment: Text.AlignRight
-                                            font.family: Theme.fonts.body; font.pixelSize: 15
+                                            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                             color: Theme.colors.ink
                                         }
                                         Text {
@@ -260,7 +261,7 @@ Item {
                                             }
                                             visible: text !== ""
                                             wrapMode: Text.WordWrap
-                                            font.family: Theme.fonts.body; font.pixelSize: 13
+                                            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
                                             color: Theme.colors.ink2
                                         }
                                     }

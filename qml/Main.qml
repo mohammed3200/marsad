@@ -9,19 +9,18 @@ Item {
     // bound to the Python controller (context property `app`)
     property var dashModel: app.dashModel
     property string reportDate: app.reportDate
-    property string ollamaStatus: app.ollamaStatus
-    property bool ollamaOnline: app.ollamaOnline
+    property string engineStatus: app.engineStatus
+    property bool engineOnline: app.engineOnline
     property int currentIndex: 2
-    readonly property string health: (dashModel && dashModel.overall_health) ? dashModel.overall_health : ""
 
-    // page label + a short glyph marker, RTL order
+    // page label + a drawn shape marker (fonts carry no symbol glyphs), RTL order
     readonly property var navItems: [
-        { label: "إدخال البيانات",   glyph: "▤" },
-        { label: "التحليل والوكلاء", glyph: "◈" },
-        { label: "لوحة التحكم",      glyph: "▦" },
-        { label: "التقارير",         glyph: "▣" },
-        { label: "الإعدادات",        glyph: "⚙" },
-        { label: "جهات الاتصال",     glyph: "☷" }
+        { label: "إدخال البيانات",   shape: "bars"    },
+        { label: "التحليل والوكلاء", shape: "diamond" },
+        { label: "لوحة التحكم",      shape: "grid"    },
+        { label: "التقارير",         shape: "square"  },
+        { label: "الإعدادات",        shape: "dial"    },
+        { label: "جهات الاتصال",     shape: "trigram" }
     ]
     readonly property string backendLabel: {
         var b = app.settings.ai_backend
@@ -127,10 +126,11 @@ Item {
                                     Layout.fillWidth: true
                                     horizontalAlignment: Text.AlignRight
                                 }
-                                Text {
-                                    text: modelData.glyph
-                                    font.pixelSize: 15
+                                Glyph {
+                                    shape: modelData.shape
                                     color: active ? Theme.colors.accent : Theme.colors.ink3
+                                    width: 15; height: 15
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
                             }
                             HoverHandler { id: hover }
@@ -153,11 +153,11 @@ Item {
                         spacing: 7
                         Rectangle {
                             width: 7; height: 7; radius: 4
-                            color: root.ollamaOnline ? Theme.colors.green : Theme.colors.red
+                            color: root.engineOnline ? Theme.colors.green : Theme.colors.red
                             Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
-                            text: root.backendLabel + " — " + root.ollamaStatus
+                            text: root.backendLabel + " — " + root.engineStatus
                             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                             color: Theme.colors.ink2
                         }
@@ -172,7 +172,7 @@ Item {
                     }
                     Text {
                         text: "منظومة LTT-PMO"
-                        font.family: Theme.fonts.mono; font.pixelSize: 10
+                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                         color: Theme.colors.ink3
                         LayoutMirroring.enabled: false
                     }
@@ -181,19 +181,55 @@ Item {
         }
 
         // ═══════════ content ═══════════
-        StackLayout {
+        Item {
             Layout.fillWidth: true; Layout.fillHeight: true
-            currentIndex: root.currentIndex
 
-            InputPage {}
-            AnalysisPage {}
-            DashboardPage {
-                model: root.dashModel
-                reportDate: root.reportDate
+            StackLayout {
+                anchors.fill: parent
+                currentIndex: root.currentIndex
+
+                InputPage {}
+                AnalysisPage {}
+                DashboardPage {
+                    model: root.dashModel
+                    reportDate: root.reportDate
+                }
+                ReportsPage {}
+                SettingsPage {}
+                ContactsPage {}
             }
-            ReportsPage {}
-            SettingsPage {}
-            ContactsPage {}
+
+            // ── transient toast (controller `notify` messages) ──
+            Connections {
+                target: app
+                function onNotify(msg) {
+                    toastText.text = msg
+                    toast.visible = true
+                    toastTimer.restart()
+                }
+            }
+            Timer {
+                id: toastTimer
+                interval: 3500
+                onTriggered: toast.visible = false
+            }
+            Rectangle {
+                id: toast
+                visible: false
+                anchors { bottom: parent.bottom; bottomMargin: 22; horizontalCenter: parent.horizontalCenter }
+                width: Math.min(toastText.implicitWidth + 32, parent.width - 48)
+                height: toastText.implicitHeight + 18
+                radius: 10
+                color: Theme.colors.ink
+                Text {
+                    id: toastText
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, toast.width - 32)
+                    elide: Text.ElideLeft
+                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
+                    color: Theme.colors.bg
+                }
+            }
         }
     }
 }

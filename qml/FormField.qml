@@ -11,13 +11,14 @@ ColumnLayout {
     property string placeholder: ""
     property bool ltr: false
     property bool password: false
+    property bool intOnly: false
     Layout.fillWidth: true
     spacing: 5
 
     Text {
         text: field.label
         visible: field.label !== ""
-        font.family: Theme.fonts.body; font.pixelSize: 13
+        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
         color: Theme.colors.ink2
     }
     TextField {
@@ -26,11 +27,12 @@ ColumnLayout {
         placeholderText: field.placeholder
         placeholderTextColor: Theme.colors.ink3
         echoMode: field.password ? TextInput.Password : TextInput.Normal
+        validator: field.intOnly ? intValidator : null
         color: Theme.colors.ink
         font.family: field.ltr ? Theme.fonts.mono : Theme.fonts.body
-        font.pixelSize: 14
+        font.pixelSize: Theme.fs.body
         horizontalAlignment: field.ltr ? Text.AlignLeft : Text.AlignRight
-        LayoutMirroring.enabled: field.ltr ? false : undefined
+        LayoutMirroring.enabled: !field.ltr
         selectByMouse: true
         leftPadding: 12; rightPadding: 12; topPadding: 9; bottomPadding: 9
         background: Rectangle {
@@ -41,4 +43,5 @@ ColumnLayout {
             Behavior on border.color { ColorAnimation { duration: 120 } }
         }
     }
+    IntValidator { id: intValidator; bottom: 1 }
 }

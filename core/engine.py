@@ -34,9 +34,19 @@ class AIEngine:
         }.get(backend, self._ask_ollama)(system_prompt, user_text)
 
     @staticmethod
+    def _bad_scheme(url: str) -> dict | None:
+        """يرفض أي مخطط غير http/https قبل الطلب — يُعيد {"error":…} عند الرفض وNone عند القبول."""
+        if not url.lower().startswith(("http://", "https://")):
+            return {"error": f"رابط غير مدعوم (http/https فقط): {url}"}
+        return None
+
+    @staticmethod
     def _http_json(url: str, payload: dict, headers: dict, timeout: int) -> dict:
         """POST JSON، أعِد رداً مُفكَّكاً أو {"error":…}. لا يرفع استثناء أبداً."""
         import urllib.request, urllib.error
+        bad = AIEngine._bad_scheme(url)
+        if bad is not None:
+            return bad
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", **headers}, method="POST")
@@ -81,6 +91,9 @@ class AIEngine:
         import urllib.request, urllib.error
         model   = self.settings.get("ollama_model", "llama3.2")
         url     = self.settings.get("ollama_url", "http://localhost:11434")
+        bad     = self._bad_scheme(url)
+        if bad is not None:
+            return bad
         payload = json.dumps({
             "model"  : model,
             "prompt" : f"SYSTEM: {system_prompt}\n\nUSER: {user_text}",
@@ -145,7 +158,12 @@ class AIEngine:
             payload["model"] = model
         res = self._http_json(base_url, payload, headers, self._timeout())
         if "error" in res:
-            return res
+            # بعض الواجهات المتوافقة (مثل LM Studio) ترفض response_format بـ HTTP 400 — أعِد المحاولة بدونه
+            if res["error"].startswith("HTTP 400"):
+                payload.pop("response_format", None)
+                res = self._http_json(base_url, payload, headers, self._timeout())
+            if "error" in res:
+                return res
         try:
             return self._parse_json(res["_ok"]["choices"][0]["message"]["content"])
         except Exception as e:

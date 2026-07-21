@@ -6,12 +6,13 @@ slots. Analysis runs on a worker thread; results flow back via signals.
 """
 import json
 import datetime
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
 
-from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel
+from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel, WORKER_AGENTS
 from core.paths import DATA_DIR, BUNDLE_DIR
 from connectors import ConnectorHub, build_report_html, read_file_to_report
 from .settings_bridge import load_settings, save_settings
@@ -26,8 +27,9 @@ LATEST_F   = REPORTS / "latest.json"
 class AppController(QObject):
     dashModelChanged  = Signal()
     reportDateChanged = Signal()
-    ollamaChanged     = Signal()
+    engineChanged     = Signal()
     busyChanged       = Signal()
+    testingChanged    = Signal()
     progress          = Signal(int)
     logMessage        = Signal(str)
     analysisDone      = Signal()
@@ -39,6 +41,8 @@ class AppController(QObject):
     reportsChanged    = Signal()
     notify            = Signal(str)          # transient user message
     navRequested      = Signal(int)          # page index to switch to
+    settingsChanged   = Signal()
+    _collected        = Signal("QVariant")   # reports gathered off the GUI thread
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,8 +58,12 @@ class AppController(QObject):
         self._busy     = False
         self._online   = False
         self._status   = "غير متصل"
+        self._testing_engine = False
+        self._testing_email  = False
+        self._collecting = False
         self._thread   = None
         self._worker   = None
+        self._collected.connect(self._on_collected)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._load_latest()
         self._start_whatsapp_if_enabled()
@@ -69,17 +77,36 @@ class AppController(QObject):
     def reportDate(self):
         return self._date
 
-    @Property(bool, notify=ollamaChanged)
-    def ollamaOnline(self):
+    @Property(bool, notify=engineChanged)
+    def engineOnline(self):
         return self._online
 
-    @Property(str, notify=ollamaChanged)
-    def ollamaStatus(self):
+    @Property(str, notify=engineChanged)
+    def engineStatus(self):
         return self._status
 
     @Property(bool, notify=busyChanged)
     def busy(self):
         return self._busy
+
+    @Property(bool, notify=testingChanged)
+    def testing(self):
+        """True while a connection/email test is in flight."""
+        return self._testing_engine or self._testing_email
+
+    @Property(bool, notify=testingChanged)
+    def testingEngine(self):
+        """True while an engine connection test is in flight."""
+        return self._testing_engine
+
+    @Property(bool, notify=testingChanged)
+    def testingEmail(self):
+        """True while an email test is in flight."""
+        return self._testing_email
+
+    @Property(int, constant=True)
+    def agentCount(self):
+        return len(WORKER_AGENTS) + 1
 
     @Property(QObject, constant=True)
     def agentsModel(self):
@@ -93,7 +120,7 @@ class AppController(QObject):
     def reportCount(self):
         return self._reports.count()
 
-    @Property("QVariant", constant=True)
+    @Property("QVariant", notify=settingsChanged)
     def settings(self):
         return self._settings
 
@@ -121,14 +148,27 @@ class AppController(QObject):
 
     @Slot()
     def collectReports(self):
+        if self._collecting:
+            return
+        self._collecting = True
+        threading.Thread(target=self._run_collect, daemon=True).start()
+
+    def _run_collect(self):
+        """جمع التقارير (IMAP/ERP/HTTP) على خيط منفصل حتى لا تتجمّد الواجهة."""
         try:
-            reps = self._hub.collect_all()
-            self._reports.extend(reps)
-            self.reportsChanged.emit()
-            self.notify.emit(f"جُمِّع {len(reps)} تقرير من المصادر"
-                             if reps else "لا توجد تقارير جديدة")
+            self._collected.emit(self._hub.collect_all())
         except Exception as e:
             self.notify.emit(f"تعذّر الجمع: {e}")
+            self._collecting = False
+
+    @Slot("QVariant")
+    def _on_collected(self, reps):
+        self._collecting = False
+        reps = list(reps or [])
+        self._reports.extend(reps)
+        self.reportsChanged.emit()
+        self.notify.emit(f"جُمِّع {len(reps)} تقرير من المصادر"
+                         if reps else "لا توجد تقارير جديدة")
 
     @Slot()
     def pickReportFiles(self):
@@ -295,11 +335,22 @@ class AppController(QObject):
     # ───────────────────────── settings / connection ─────────────────────────
     @Slot()
     def testConnection(self):
-        ok, msg = self._ai.test_connection()
+        if self._testing_engine:
+            return
+        self._set_testing_engine(True)
+        threading.Thread(target=self._run_connection_test, daemon=True).start()
+
+    def _run_connection_test(self):
+        """اختبار المحرّك على خيط منفصل — النداء قد يستغرق حتى ai_timeout."""
+        try:
+            ok, msg = self._ai.test_connection()
+        except Exception as e:
+            ok, msg = False, str(e)
         self._online = ok
         self._status = "متصل" if ok else "غير متصل"
-        self.ollamaChanged.emit()
+        self.engineChanged.emit()
         self.connectionTested.emit(ok, msg)
+        self._set_testing_engine(False)
 
     @Slot("QVariant")
     def saveSettings(self, values):
@@ -310,22 +361,34 @@ class AppController(QObject):
         # الموصّلات تلتقط الإعدادات عند الإنشاء — أعد بناء الـ hub حتى تسري
         # بيانات البريد / مجلد ERP / واتساب الجديدة فوراً.
         self._rebuild_hub()
+        self.settingsChanged.emit()
         self.notify.emit("حُفظت الإعدادات")
 
     def _rebuild_hub(self):
         try:
             self._hub.stop_all()
-        except Exception:
-            pass
+        except Exception as e:
+            self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._start_whatsapp_if_enabled()
 
     @Slot()
     def testEmail(self):
-        ok, msg = self._hub.test_email()
+        if self._testing_email:
+            return
+        self._set_testing_email(True)
+        threading.Thread(target=self._run_email_test, daemon=True).start()
+
+    def _run_email_test(self):
+        """اختبار البريد على خيط منفصل — اتصال IMAP/SMTP قد يحجب الواجهة."""
+        try:
+            ok, msg = self._hub.test_email()
+        except Exception as e:
+            ok, msg = False, str(e)
         self.emailTested.emit(ok, msg)
         self.notify.emit(msg)
+        self._set_testing_email(False)
 
     @Slot(result="QVariant")
     def getSettings(self):
@@ -358,6 +421,7 @@ class AppController(QObject):
         self._settings["email_dept_map"] = maps["email_dept_map"]
         self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
         save_settings(self._settings)
+        self.settingsChanged.emit()
         self.notify.emit("تمت مزامنة جهات الاتصال مع الإعدادات")
 
     # ───────────────────────── whatsapp ─────────────────────────
@@ -376,7 +440,8 @@ class AppController(QObject):
         from connectors import WhatsAppHelper
         try:
             port = int(self._settings.get("whatsapp_port", 5051))
-            path = WhatsAppHelper.save_bridge_file(port)
+            token = getattr(self._hub, "wa_token", "")
+            path = WhatsAppHelper.save_bridge_file(port, token=token)
             self.notify.emit(f"أُنشئ ملف الجسر: {path}")
         except Exception as e:
             self.notify.emit(f"تعذّر إنشاء الجسر: {e}")
@@ -394,8 +459,8 @@ class AppController(QObject):
         try:
             if LATEST_F.exists():
                 LATEST_F.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            self.logMessage.emit(f"تعذّر حذف ملف النتائج الأخيرة — {e}")
         self._results, self._dash = {}, {}
         self._date = ""
         self.dashModelChanged.emit()
@@ -406,6 +471,14 @@ class AppController(QObject):
     def _set_busy(self, v):
         self._busy = v
         self.busyChanged.emit()
+
+    def _set_testing_engine(self, v):
+        self._testing_engine = v
+        self.testingChanged.emit()
+
+    def _set_testing_email(self, v):
+        self._testing_email = v
+        self.testingChanged.emit()
 
     def _load_latest(self):
         if LATEST_F.exists():

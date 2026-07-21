@@ -16,7 +16,7 @@ ColumnLayout {
     Text {
         text: field.label
         visible: field.label !== ""
-        font.family: Theme.fonts.body; font.pixelSize: 13
+        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
         color: Theme.colors.ink2
     }
     ComboBox {
@@ -28,7 +28,7 @@ ColumnLayout {
 
         contentItem: Text {
             text: box.displayText
-            font.family: Theme.fonts.body; font.pixelSize: 14
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
             color: Theme.colors.ink
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignRight
@@ -41,9 +41,11 @@ ColumnLayout {
             border.width: box.activeFocus ? 2 : 1
             border.color: box.activeFocus ? Theme.colors.accent : Theme.colors.borderHi
         }
-        indicator: Text {
+        indicator: Glyph {
+            shape: "chevron"
             x: 12; y: (box.height - height) / 2
-            text: "▾"; font.pixelSize: 12; color: Theme.colors.ink3
+            width: 10; height: 10
+            color: Theme.colors.ink3
         }
         popup: Popup {
             y: box.height + 4
@@ -66,7 +68,7 @@ ColumnLayout {
             implicitHeight: 36
             contentItem: Text {
                 text: modelData
-                font.family: Theme.fonts.body; font.pixelSize: 14
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                 color: Theme.colors.ink
                 verticalAlignment: Text.AlignVCenter
                 horizontalAlignment: Text.AlignRight

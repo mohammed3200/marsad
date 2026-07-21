@@ -15,6 +15,8 @@ PageFrame {
     // backend index ↔ id
     readonly property var backendIds: ["ollama", "claude", "openai", "gemini", "azure"]
     function backendIndex(id) { var i = backendIds.indexOf(id); return i < 0 ? 0 : i }
+    function resetEngineTest() { pg.testState = 0; pg.testMsg = "" }
+    function resetEmailTest()  { pg.emailState = 0; pg.emailMsg = "" }
 
     // OpenAI-compatible provider presets (base_url, model)
     readonly property var oaPresets: [
@@ -41,22 +43,22 @@ PageFrame {
         options: ["Ollama — محلي", "Claude API", "OpenAI / متوافق", "Google Gemini", "Azure OpenAI"]
         currentIndex: pg.backendIndex(app.settings.ai_backend)
     }
-    FormField { id: aiTimeout; label: "مهلة الاستجابة (ثانية)"; ltr: true; text: (app.settings.ai_timeout || 180).toString() }
+    FormField { id: aiTimeout; label: "مهلة الاستجابة (ثانية)"; ltr: true; intOnly: true; Component.onCompleted: text = (app.settings.ai_timeout || 180).toString() }
 
     // ── Ollama ──
     ColumnLayout {
         Layout.fillWidth: true; spacing: 14
         visible: backendC.currentIndex === 0
-        FormField { id: ollamaUrl;   label: "عنوان الخادم"; ltr: true; text: app.settings.ollama_url || "" }
-        FormField { id: ollamaModel; label: "اسم النموذج"; ltr: true; text: app.settings.ollama_model || "" }
+        FormField { id: ollamaUrl;   label: "عنوان الخادم"; ltr: true; Component.onCompleted: text = app.settings.ollama_url || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: ollamaModel; label: "اسم النموذج"; ltr: true; Component.onCompleted: text = app.settings.ollama_model || "" }
     }
 
     // ── Claude ──
     ColumnLayout {
         Layout.fillWidth: true; spacing: 14
         visible: backendC.currentIndex === 1
-        FormField { id: claudeKey;   label: "مفتاح API"; ltr: true; password: true; text: app.settings.claude_api_key || "" }
-        FormField { id: claudeModel; label: "اسم النموذج"; ltr: true; text: app.settings.claude_model || "" }
+        FormField { id: claudeKey;   label: "مفتاح API"; ltr: true; password: true; Component.onCompleted: text = app.settings.claude_api_key || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: claudeModel; label: "اسم النموذج"; ltr: true; Component.onCompleted: text = app.settings.claude_model || "" }
     }
 
     // ── OpenAI / compatible ──
@@ -67,86 +69,93 @@ PageFrame {
             id: oaPreset
             label: "الخدمة"
             options: pg.oaPresets.map(function(p){ return p.name })
+            Component.onCompleted: {
+                var u = app.settings.openai_base_url || ""
+                var i = pg.oaPresets.findIndex(function(p){ return p.url === u })
+                currentIndex = i >= 0 ? i : pg.oaPresets.length - 1
+            }
             onActivated: function(i) {
                 var p = pg.oaPresets[i]
                 if (p.url)   openaiBase.text = p.url
                 if (p.model) openaiModel.text = p.model
             }
         }
-        FormField { id: openaiBase;  label: "عنوان الخدمة (Base URL)"; ltr: true; text: app.settings.openai_base_url || "" }
-        FormField { id: openaiKey;   label: "مفتاح API"; ltr: true; password: true; text: app.settings.openai_api_key || "" }
-        FormField { id: openaiModel; label: "اسم النموذج"; ltr: true; text: app.settings.openai_model || "" }
+        FormField { id: openaiBase;  label: "عنوان الخدمة (Base URL)"; ltr: true; Component.onCompleted: text = app.settings.openai_base_url || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: openaiKey;   label: "مفتاح API"; ltr: true; password: true; Component.onCompleted: text = app.settings.openai_api_key || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: openaiModel; label: "اسم النموذج"; ltr: true; Component.onCompleted: text = app.settings.openai_model || "" }
     }
 
     // ── Gemini ──
     ColumnLayout {
         Layout.fillWidth: true; spacing: 14
         visible: backendC.currentIndex === 3
-        FormField { id: geminiKey;   label: "مفتاح API"; ltr: true; password: true; text: app.settings.gemini_api_key || "" }
-        FormField { id: geminiModel; label: "اسم النموذج"; ltr: true; text: app.settings.gemini_model || "" }
+        FormField { id: geminiKey;   label: "مفتاح API"; ltr: true; password: true; Component.onCompleted: text = app.settings.gemini_api_key || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: geminiModel; label: "اسم النموذج"; ltr: true; Component.onCompleted: text = app.settings.gemini_model || "" }
     }
 
     // ── Azure ──
     ColumnLayout {
         Layout.fillWidth: true; spacing: 14
         visible: backendC.currentIndex === 4
-        FormField { id: azureEndpoint; label: "Endpoint"; ltr: true; text: app.settings.azure_endpoint || "" }
-        FormField { id: azureDeploy;   label: "اسم النشر (Deployment)"; ltr: true; text: app.settings.azure_deployment || "" }
-        FormField { id: azureKey;      label: "مفتاح API"; ltr: true; password: true; text: app.settings.azure_api_key || "" }
-        FormField { id: azureVersion;  label: "إصدار الواجهة (api-version)"; ltr: true; text: app.settings.azure_api_version || "" }
+        FormField { id: azureEndpoint; label: "Endpoint"; ltr: true; Component.onCompleted: text = app.settings.azure_endpoint || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: azureDeploy;   label: "اسم النشر (Deployment)"; ltr: true; Component.onCompleted: text = app.settings.azure_deployment || "" }
+        FormField { id: azureKey;      label: "مفتاح API"; ltr: true; password: true; Component.onCompleted: text = app.settings.azure_api_key || ""; onTextChanged: pg.resetEngineTest() }
+        FormField { id: azureVersion;  label: "إصدار الواجهة (api-version)"; ltr: true; Component.onCompleted: text = app.settings.azure_api_version || "" }
     }
 
     // engine test
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
-        AppButton { text: "اختبار المحرّك"; kind: "ghost"; onClicked: app.testConnection() }
+        AppButton { text: "اختبار المحرّك"; kind: "ghost"; enabled: !app.testingEngine
+            onClicked: { pg.testState = 2; pg.testMsg = "جارٍ الفحص…"; app.testConnection() } }
         Rectangle {
             width: 8; height: 8; radius: 4
             visible: pg.testState !== 0
-            color: pg.testState === 1 ? Theme.colors.green : Theme.colors.red
+            color: pg.testState === 1 ? Theme.colors.green : pg.testState === 2 ? Theme.colors.amber : Theme.colors.red
             Layout.alignment: Qt.AlignVCenter
         }
         Text {
             text: pg.testMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
-            color: pg.testState === 1 ? Theme.colors.green : pg.testState === -1 ? Theme.colors.red : Theme.colors.ink2
+            color: Theme.colors.ink2
         }
     }
 
     // ═══════════ Email ═══════════
     ReportSection { title: "البريد الإلكتروني" }
-    FormField { id: emailUser; label: "البريد"; ltr: true; text: app.settings.email_user || "" }
-    FormField { id: emailPass; label: "كلمة المرور / App Password"; ltr: true; password: true; text: app.settings.email_password || "" }
+    FormField { id: emailUser; label: "البريد"; ltr: true; Component.onCompleted: text = app.settings.email_user || ""; onTextChanged: pg.resetEmailTest() }
+    FormField { id: emailPass; label: "كلمة المرور / App Password"; ltr: true; password: true; Component.onCompleted: text = app.settings.email_password || ""; onTextChanged: pg.resetEmailTest() }
     RowLayout {
         Layout.fillWidth: true
         spacing: 14
-        FormField { id: imapHost; label: "خادم IMAP"; ltr: true; text: app.settings.imap_host || "" }
-        FormField { id: smtpHost; label: "خادم SMTP"; ltr: true; text: app.settings.smtp_host || "" }
-        FormField { id: smtpPort; label: "منفذ SMTP"; ltr: true; Layout.preferredWidth: 120; text: (app.settings.smtp_port || 587).toString() }
+        FormField { id: imapHost; label: "خادم IMAP"; ltr: true; Component.onCompleted: text = app.settings.imap_host || ""; onTextChanged: pg.resetEmailTest() }
+        FormField { id: smtpHost; label: "خادم SMTP"; ltr: true; Component.onCompleted: text = app.settings.smtp_host || ""; onTextChanged: pg.resetEmailTest() }
+        FormField { id: smtpPort; label: "منفذ SMTP"; ltr: true; intOnly: true; Layout.preferredWidth: 120; Component.onCompleted: text = (app.settings.smtp_port || 587).toString(); onTextChanged: pg.resetEmailTest() }
     }
     FormField {
         id: recipients
         label: "مستلمو التقرير (افصل بينهم بفاصلة)"
         ltr: true
-        text: (app.settings.report_recipients || []).join(", ")
+        Component.onCompleted: text = (app.settings.report_recipients || []).join(", ")
     }
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
-        AppButton { text: "اختبار البريد"; kind: "ghost"; onClicked: app.testEmail() }
+        AppButton { text: "اختبار البريد"; kind: "ghost"; enabled: !app.testingEmail
+            onClicked: { pg.emailState = 2; pg.emailMsg = "جارٍ الفحص…"; app.testEmail() } }
         Rectangle {
             width: 8; height: 8; radius: 4
             visible: pg.emailState !== 0
-            color: pg.emailState === 1 ? Theme.colors.green : Theme.colors.red
+            color: pg.emailState === 1 ? Theme.colors.green : pg.emailState === 2 ? Theme.colors.amber : Theme.colors.red
             Layout.alignment: Qt.AlignVCenter
         }
         Text {
             text: pg.emailMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
-            color: pg.emailState === 1 ? Theme.colors.green : pg.emailState === -1 ? Theme.colors.red : Theme.colors.ink2
+            color: Theme.colors.ink2
         }
     }
 
@@ -160,7 +169,7 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
-        FormField { id: erpFolder; label: "المسار"; ltr: true; text: app.settings.erp_folder || "" }
+        FormField { id: erpFolder; label: "المسار"; ltr: true; Component.onCompleted: text = app.settings.erp_folder || "" }
         AppButton {
             text: "استعراض"; kind: "ghost"; Layout.alignment: Qt.AlignBottom
             onClicked: { var d = app.pickErpFolder(); if (d.length) erpFolder.text = d }
@@ -177,12 +186,12 @@ PageFrame {
             checked: app.settings.whatsapp_enabled === true
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
             contentItem: Text {
-                text: "تفعيل استقبال واتساب"; leftPadding: waEnabled.indicator.width + 8
+                text: "تفعيل استقبال واتساب"; rightPadding: waEnabled.indicator.width + 8
                 font: waEnabled.font; color: Theme.colors.ink; verticalAlignment: Text.AlignVCenter
             }
         }
         Item { Layout.fillWidth: true }
-        FormField { id: waPort; label: "منفذ المستقبِل"; ltr: true; Layout.preferredWidth: 140; text: (app.settings.whatsapp_port || 5051).toString() }
+        FormField { id: waPort; label: "منفذ المستقبِل"; ltr: true; intOnly: true; Layout.preferredWidth: 140; Component.onCompleted: text = (app.settings.whatsapp_port || 5051).toString() }
     }
     Text {
         text: "واتساب يحتاج جسر Node.js يعمل مرة واحدة: «توليد ملف الجسر»، ثم في مجلد البيانات "
@@ -205,7 +214,8 @@ PageFrame {
         Item { Layout.fillWidth: true }
         AppButton {
             text: "حفظ الإعدادات"; kind: "accent"
-            onClicked: app.saveSettings({
+            onClicked: {
+                app.saveSettings({
                 "ai_backend":        pg.backendIds[backendC.currentIndex],
                 "ai_timeout":        parseInt(aiTimeout.text) || 180,
                 "ollama_url":        ollamaUrl.text,
@@ -230,7 +240,9 @@ PageFrame {
                 "erp_folder":        erpFolder.text,
                 "whatsapp_enabled":  waEnabled.checked,
                 "whatsapp_port":     parseInt(waPort.text) || 5051
-            })
+                })
+                pg.resetEngineTest(); pg.resetEmailTest()
+            }
         }
     }
 }

@@ -3,19 +3,19 @@ import QtQuick.Layouts
 
 Item {
     id: es
-    property string icon: "◔"
     property string message: ""
     property string hint: ""
     property alias actions: actionHolder.data   // optional buttons row
 
     ColumnLayout {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 440)
+        width: Math.max(0, Math.min(parent.width - 48, 440))
         spacing: 9
-        Text {
-            text: es.icon
+        Glyph {
+            shape: "outline"
             Layout.alignment: Qt.AlignHCenter
-            font.pixelSize: 44; color: Theme.colors.ink3
+            width: 40; height: 40
+            color: Theme.colors.ink3
         }
         Text {
             text: es.message

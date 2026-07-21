@@ -20,6 +20,7 @@ import datetime
 import threading
 import time
 import logging
+import secrets
 from email.header     import decode_header
 from email.mime.text  import MIMEText
 from email.mime.multipart   import MIMEMultipart
@@ -303,7 +304,7 @@ async function start() {
                 const fetch = (await import('node-fetch')).default
                 await fetch('http://localhost:5051/wa_message', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-WA-Token': '__WA_TOKEN__' },
                     body: JSON.stringify({
                         group_id : gid,
                         sender   : msg.pushName || '',
@@ -323,15 +324,17 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
 """
 
     @staticmethod
-    def save_bridge_file(port: int = 5051):
-        """حفظ ملف Node.js Bridge في مجلد البيانات مع حقن منفذ المستقبِل."""
-        try:
-            from core.paths import DATA_DIR
-            out = DATA_DIR / "whatsapp_bridge.js"
-        except Exception:
-            out = Path(__file__).parent / "whatsapp_bridge.js"
+    def save_bridge_file(port: int = 5051, token: str = ""):
+        """حفظ ملف Node.js Bridge في مجلد البيانات مع حقن منفذ المستقبِل
+        ورمز X-WA-Token المشترك (إن وُجد)."""
+        from core.paths import DATA_DIR
+        out = DATA_DIR / "whatsapp_bridge.js"
         js = WhatsAppHelper.WHATSAPP_BRIDGE_JS.replace(
             "localhost:5051", f"localhost:{int(port)}")
+        if token:
+            js = js.replace("__WA_TOKEN__", token)
+        else:
+            js = js.replace(", 'X-WA-Token': '__WA_TOKEN__'", "")
         out.write_text(js, encoding="utf-8")
         return str(out)
 
@@ -383,11 +386,13 @@ class WhatsAppReceiver:
     """يستمع على 127.0.0.1:<port>/wa_message ويحوّل كل رسالة إلى تقرير عبر
     on_message([report]). stdlib فقط — لا تبعيات جديدة."""
 
-    def __init__(self, port: int, on_message, dept_fn=None, logger=print):
+    def __init__(self, port: int, on_message, dept_fn=None, logger=print,
+                 token: str = ""):
         self.port       = int(port)
         self.on_message = on_message
         self.dept_fn    = dept_fn or (lambda gid: "admin")
         self.log        = logger
+        self.token      = token
         self._server    = None
         self._thread    = None
 
@@ -411,6 +416,8 @@ class WhatsAppReceiver:
             def do_POST(self):
                 if self.path.rstrip("/") != "/wa_message":
                     self.send_response(404); self.end_headers(); return
+                if recv.token and self.headers.get("X-WA-Token") != recv.token:
+                    self.send_response(403); self.end_headers(); return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                     data   = json.loads(self.rfile.read(length) or b"{}")
@@ -612,6 +619,12 @@ class ERPConnector:
         return reports
 
     def _read_file(self, fpath: Path) -> dict | None:
+        # خريطة الأقسام المُعدّة أولاً، ثم التخمين من اسم الملف
+        fname = fpath.name.lower()
+        for key, dept in self.dept_map.items():
+            if key.lower() in fname:
+                return read_file_to_report(fpath, source="erp", dept=dept,
+                                           from_label=f"ERP: {fpath.name}")
         return read_file_to_report(fpath, source="erp",
                                    from_label=f"ERP: {fpath.name}")
 
@@ -653,6 +666,7 @@ class ConnectorHub:
         self._lock    = threading.Lock()
         self._log_fn  = print
         self.whatsapp = None
+        self.wa_token = secrets.token_hex(16)
 
     def set_logger(self, fn):
         self._log_fn = fn
@@ -667,7 +681,8 @@ class ConnectorHub:
         collect_all()، تماماً مثل البريد و ERP."""
         if self.whatsapp:
             self.whatsapp.stop()
-        self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept, self._log_fn)
+        self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept,
+                                         self._log_fn, token=self.wa_token)
         self.whatsapp.start()
 
     def _append(self, reports: list):
@@ -717,10 +732,15 @@ class ConnectorHub:
         return all_reports
 
     def stop_all(self):
-        self.email.stop()
-        self.erp.stop()
+        targets = [("البريد", self.email), ("ERP", self.erp)]
         if self.whatsapp:
-            self.whatsapp.stop()
+            targets.append(("واتساب", self.whatsapp))
+        for name, conn in targets:
+            try:
+                conn.stop()
+            except Exception as e:
+                log.warning(f"فشل إيقاف {name}: {e}")
+                self._log_fn(f"فشل إيقاف {name}: {e}")
 
     def test_email(self) -> tuple:
         return self.email.test_connection()

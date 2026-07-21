@@ -19,12 +19,15 @@ status shows as a small dot, never a wall of tint. Keep it calm.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # optional
-pip install -r requirements.txt                      # PySide6, reportlab, openpyxl, PyPDF2
+pip install -r requirements.txt                      # PySide6, reportlab, openpyxl, PyPDF2, python-docx
 python app.py
 ```
 
-Requires a running LLM backend — **Ollama** local (`http://localhost:11434`; set `ollama_model` in
-`settings.json`) or **Claude API** (`ai_backend: "claude"` + `claude_api_key`). No test suite/linter.
+Requires an LLM backend — `ai_backend` in `settings.json` picks one of five: **ollama** (default;
+`ollama_url`/`ollama_model`), **claude** (`claude_api_key`/`claude_model`), **openai**
+(`openai_api_key`/`openai_base_url`/`openai_model` — OpenAI-compatible: OpenRouter/Groq/Together/
+DeepSeek/LM Studio), **gemini** (`gemini_api_key`/`gemini_model`), **azure** (`azure_endpoint`/
+`azure_api_key`/`azure_deployment`/`azure_api_version`). No test suite/linter.
 
 ## Architecture
 
@@ -42,7 +45,7 @@ every layer. Changing an agent's output schema means updating its consumers (`co
   `reports/results_<ts>.json` + `reports/latest.json`. `_ensure_chief_schema()` guarantees the chief dict
   always has `overall_health`/`executive_summary`/`kpis`/`top_actions`/`dept_scores`/`achievements` (even
   on LLM failure) so the dashboard + exporters never break. Request timeout is `ai_timeout` (settings,
-  default 180s); `AIEngine._parse_json` strips ```json fences + extracts the first `{…}` for both backends.
+  default 180s); `AIEngine._parse_json` strips ```json fences + extracts the first `{…}` across all backends.
   `agent_cb(agent_id, state)` with state ∈ {running, done, error} drives live UI telemetry.
 - `contacts.py` — `ContactsDB` (JSON org chart in `data/contacts.json`) + `export_to_config()`
   (email→dept / whatsapp→dept maps the connectors route on).
@@ -53,7 +56,8 @@ every layer. Changing an agent's output schema means updating its consumers (`co
 
 **`connectors.py`** — report ingestion + outbound email: `EmailConnector` (IMAP/SMTP), `ERPConnector`
 (folder watch), `WhatsAppHelper` (generates the Baileys bridge JS), `WhatsAppReceiver` (stdlib
-`http.server` on `127.0.0.1:<whatsapp_port>/wa_message` — the Node bridge POSTs here; each message becomes
+`http.server` on `127.0.0.1:<whatsapp_port>/wa_message` — the Node bridge POSTs here with a per-session
+`X-WA-Token` header; each message becomes
 a `whatsapp` report), `ConnectorHub` (`collect_all()` facade + `start_whatsapp(port)`),
 `build_report_html()`. Shared module-level `read_file_to_report(path, source, dept, from_label)` +
 `guess_dept()` + `DOC_PATTERNS` turn one file into a report dict — used by both the ERP watcher and the
@@ -66,7 +70,9 @@ Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string
   Arabic status words to colours. Exposed to QML as the `Theme` context property.
 - `controller.py` — `AppController(QObject)`: the single object QML talks to (context property `app`).
   Owns settings, `ContactsDB`, `ConnectorHub`, `AIEngine`/`AgentsEngine`. Properties: `dashModel`,
-  `reportDate`, `ollamaOnline/Status`, `busy`, `agentsModel`, `reportsModel`, `reportCount`. Slots:
+  `reportDate`, `engineOnline/Status`, `busy`, `testing`/`testingEngine`/`testingEmail`, `agentCount`,
+  `settings` (notifying — `settingsChanged`),
+  `agentsModel`, `reportsModel`, `reportCount`. Slots:
   `runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `addFiles` (upload picked files),
   `clearDashboard`, `pickReportFiles`/`pickErpFolder` (native `QFileDialog` — the app uses `QApplication`
   so file/folder pickers work without the fragile `QtQuick.Dialogs` QML module), `goTo(index)` (+
@@ -85,9 +91,10 @@ Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string
 properties → `QQuickView` loads `qml/Main.qml`.
 
 **`qml/`** — flat directory (files auto-import each other by filename). `Main.qml` (sidebar shell +
-`StackLayout`), six pages (`DashboardPage`, `InputPage`, `AnalysisPage`, `ReportsPage`, `SettingsPage`,
-`ContactsPage`), and flat primitives (`ReportSection`, `MetricRow`, `ListRow`, `FormField`, `FormCombo`,
-`AppButton`, `EmptyState`, `PageFrame`).
+`StackLayout` + toast bound to `app.notify`), six pages (`DashboardPage`, `InputPage`, `AnalysisPage`,
+`ReportsPage`, `SettingsPage`, `ContactsPage`), and flat primitives (`ReportSection`, `MetricRow`,
+`ListRow`, `FormField`, `FormCombo`, `AppButton`, `EmptyState`, `PageFrame`, `Glyph` — drawn shape
+markers; the bundled fonts contain no symbol glyphs, so never use Unicode symbol characters in the UI).
 
 ## Configuration & data
 
@@ -101,7 +108,8 @@ properties → `QQuickView` loads `qml/Main.qml`.
 ## Conventions
 
 - Department id vocabulary is shared across `AGENT_PROMPTS`, `WORKER_AGENTS`, `settings.json` maps,
-  connector `_find_dept`/`_guess_dept`, and `DEPT_KEY_MAP` — keep them consistent.
+  `EmailConnector._find_dept()` + the module-level `guess_dept()` in `connectors.py`, and `DEPT_KEY_MAP`
+  — keep them consistent.
 - Agent output values that drive colour use fixed Arabic literals: health `جيد`/`متوسط` (else danger),
   risk `عالية`/`متوسطة`/`منخفضة`, status `مكتمل`/`متأخر`, safety `آمن`/`خطر`, `تحذير`. `Theme.statusColor`
   and the exporters branch on these exact strings.
@@ -109,7 +117,9 @@ properties → `QQuickView` loads `qml/Main.qml`.
   shadowed — qualify them as `model.state` / `model.content`.
 - **Reactivity:** bind QML to notifying properties (e.g. `app.reportCount`), not one-shot method calls
   like `model.rowCount()`, or the UI won't refresh.
-- Long-running work runs on a `QThread` worker; all UI updates cross back via signals.
+- Long-running work runs on a `QThread` worker or a daemon thread; all UI updates cross back via signals.
+- **No Unicode symbol glyphs in the UI** (nav markers, empty-state icons, chevrons) — the bundled fonts
+  carry none. Draw them with `Glyph.qml`.
 
 ## Packaging
 

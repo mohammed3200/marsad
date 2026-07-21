@@ -8,21 +8,27 @@ PageFrame {
     subtitle: "تصدير تقرير الحالة الحالي بصيغة PDF أو Excel، أو إرساله بالبريد"
 
     readonly property bool hasResults: app.dashModel && app.dashModel.overall_health !== undefined
+    readonly property string health: hasResults ? app.dashModel.overall_health : "—"
     property string notice: ""
+    property bool noticeError: false
+
+    onHasResultsChanged: if (!pg.hasResults) { pg.notice = ""; pg.noticeError = false }
 
     Connections {
         target: app
-        function onExportDone(path) { pg.notice = "حُفظ الملف: " + path }
-        function onExportFailed(msg) { pg.notice = "تعذّر التصدير: " + msg }
+        function onExportDone(path) { pg.notice = "حُفظ الملف: " + path; pg.noticeError = false }
+        function onExportFailed(msg) { pg.notice = "تعذّر التصدير: " + msg; pg.noticeError = true }
     }
 
     EmptyState {
         Layout.fillWidth: true
         Layout.preferredHeight: 160
         visible: !pg.hasResults
-        icon: "▢"
         message: "لا يوجد تقرير للتصدير"
         hint: "شغّل التحليل من «التحليل والوكلاء» أولاً"
+        actions: [
+            AppButton { text: "الانتقال إلى «التحليل والوكلاء»"; kind: "accent"; onClicked: app.goTo(1) }
+        ]
     }
 
     ColumnLayout {
@@ -38,22 +44,22 @@ PageFrame {
             spacing: 9
             Text {
                 text: "الحالة العامة"
-                font.family: Theme.fonts.body; font.pixelSize: 14; color: Theme.colors.ink2
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body; color: Theme.colors.ink2
             }
             Rectangle {
                 width: 8; height: 8; radius: 4
-                color: Theme.statusColor(pg.hasResults ? app.dashModel.overall_health : "")
+                color: Theme.statusColor(pg.health)
                 Layout.alignment: Qt.AlignVCenter
             }
             Text {
-                text: pg.hasResults ? app.dashModel.overall_health : "—"
-                font.family: Theme.fonts.display; font.pixelSize: 15; font.bold: true
-                color: Theme.statusColor(pg.hasResults ? app.dashModel.overall_health : "")
+                text: pg.health
+                font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
+                color: Theme.statusColor(pg.health)
             }
             Item { Layout.fillWidth: true }
             Text {
                 text: app.reportDate
-                font.family: Theme.fonts.mono; font.pixelSize: 12; color: Theme.colors.ink3
+                font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.caption; color: Theme.colors.ink3
                 LayoutMirroring.enabled: false
             }
         }
@@ -62,8 +68,8 @@ PageFrame {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            AppButton { text: "تصدير PDF"; kind: "accent"; onClicked: app.exportPdf("") }
-            AppButton { text: "تصدير Excel"; kind: "accent"; onClicked: app.exportExcel("") }
+            AppButton { text: "تصدير PDF"; kind: "accent"; onClicked: { pg.notice = ""; pg.noticeError = false; app.exportPdf("") } }
+            AppButton { text: "تصدير Excel"; kind: "accent"; onClicked: { pg.notice = ""; pg.noticeError = false; app.exportExcel("") } }
             AppButton { text: "فتح مجلد التقارير"; kind: "ghost"; onClicked: app.openReportsFolder() }
             Item { Layout.fillWidth: true }
         }
@@ -73,7 +79,8 @@ PageFrame {
             visible: pg.notice !== ""
             Layout.fillWidth: true
             wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight
-            font.family: Theme.fonts.body; font.pixelSize: 12; color: Theme.colors.ink2
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
+            color: pg.noticeError ? Theme.colors.red : Theme.colors.ink2
         }
     }
 
@@ -87,7 +94,7 @@ PageFrame {
             Layout.fillWidth: true
             text: "يُرسَل التقرير إلى المستلمين المضبوطين في الإعدادات (خريطة البريد ← الإدارة)."
             wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight
-            font.family: Theme.fonts.body; font.pixelSize: 13; color: Theme.colors.ink2
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2
         }
         RowLayout {
             Layout.fillWidth: true

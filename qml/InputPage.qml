@@ -17,7 +17,7 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 10
-        AppButton { text: "تحميل نماذج تجريبية"; kind: "accent"; onClicked: app.loadSamples() }
+        AppButton { text: "تحميل نماذج تجريبية"; kind: "ghost"; onClicked: app.loadSamples() }
         AppButton { text: "رفع ملفات"; kind: "ghost"; onClicked: app.pickReportFiles() }
         AppButton { text: "جمع من المصادر"; kind: "ghost"; onClicked: app.collectReports() }
         Item { Layout.fillWidth: true }
@@ -37,14 +37,13 @@ PageFrame {
         }
         Text {
             text: app.reportCount + " تقرير في القائمة"
-            font.family: Theme.fonts.body; font.pixelSize: 12; color: Theme.colors.ink3
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption; color: Theme.colors.ink3
         }
 
         EmptyState {
             Layout.fillWidth: true
             Layout.preferredHeight: 140
             visible: app.reportCount === 0
-            icon: "▢"
             message: "لا توجد تقارير بعد"
             hint: "حمّل النماذج أو أضف تقريراً من النموذج بالأسفل"
         }
@@ -65,12 +64,14 @@ PageFrame {
                             spacing: 2
                             Text {
                                 text: source
-                                font.family: Theme.fonts.body; font.pixelSize: 13; font.bold: true
-                                color: Theme.colors.accent
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; font.bold: true
+                                color: Theme.colors.ink
                             }
                             Text {
+                                Layout.fillWidth: true
                                 text: dept
-                                font.family: Theme.fonts.body; font.pixelSize: 11
+                                elide: Text.ElideLeft
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                                 color: Theme.colors.ink3
                             }
                         }
@@ -78,16 +79,22 @@ PageFrame {
                             Layout.fillWidth: true
                             spacing: 2
                             Text {
-                                text: (from_ || "—") + "  ·  " + (date || "")
-                                font.family: Theme.fonts.body; font.pixelSize: 12
+                                Layout.fillWidth: true
+                                text: {
+                                    var parts = []
+                                    parts.push(from_ || "—")
+                                    if (date) parts.push(date)
+                                    return parts.join("  ·  ")
+                                }
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                                 color: Theme.colors.ink2
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: model.content
-                                maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap
+                                maximumLineCount: 2; elide: Text.ElideLeft; wrapMode: Text.WordWrap
                                 horizontalAlignment: Text.AlignRight
-                                font.family: Theme.fonts.body; font.pixelSize: 13
+                                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                 color: Theme.colors.ink
                             }
                         }
@@ -118,7 +125,7 @@ PageFrame {
             spacing: 5
             Text {
                 text: "نص التقرير"
-                font.family: Theme.fonts.body; font.pixelSize: 13; color: Theme.colors.ink2
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2
             }
             ScrollView {
                 Layout.fillWidth: true
@@ -128,7 +135,7 @@ PageFrame {
                     placeholderText: "الصق أو اكتب محتوى التقرير الميداني هنا…"
                     placeholderTextColor: Theme.colors.ink3
                     color: Theme.colors.ink
-                    font.family: Theme.fonts.body; font.pixelSize: 14
+                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                     wrapMode: TextArea.Wrap
                     horizontalAlignment: Text.AlignRight
                     leftPadding: 12; rightPadding: 12; topPadding: 10; bottomPadding: 10

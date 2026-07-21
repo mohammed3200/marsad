@@ -9,12 +9,12 @@ Button {
                         : Theme.colors.panel
     property color _fg:   kind === "ghost" ? Theme.colors.ink : Theme.colors.bg
     property color _hover: kind === "accent" ? Theme.colors.tealHi
-                         : kind === "danger" ? "#F87171"
+                         : kind === "danger" ? Theme.colors.redHi
                          : Theme.colors.cardHi
 
     implicitHeight: 38
     font.family: Theme.fonts.body
-    font.pixelSize: 14
+    font.pixelSize: Theme.fs.body
     font.bold: kind !== "ghost"
 
     contentItem: Text {
