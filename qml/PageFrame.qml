@@ -29,21 +29,25 @@ Item {
                 // title block
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 5
                     Text {
                         text: page.title
-                        font.family: Theme.fonts.display; font.pixelSize: 24; font.bold: true
+                        font.family: Theme.fonts.display; font.pixelSize: Theme.fs.display; font.bold: true
                         color: Theme.colors.ink
                     }
                     Text {
                         text: page.subtitle
                         visible: page.subtitle !== ""
-                        font.family: Theme.fonts.body; font.pixelSize: 13
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
                         color: Theme.colors.ink2
                     }
+                    // short accent rule (leading edge in RTL) — a kashida-like tick
                     Rectangle {
-                        Layout.fillWidth: true; Layout.topMargin: 8
-                        height: 2; color: Theme.colors.accent; opacity: 0.9
+                        Layout.topMargin: 9
+                        Layout.preferredWidth: 56; height: 3; radius: 2
+                        color: Theme.colors.accent
                     }
                 }
 

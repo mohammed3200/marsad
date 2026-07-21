@@ -14,14 +14,26 @@ Item {
     property int currentIndex: 2
     readonly property string health: (dashModel && dashModel.overall_health) ? dashModel.overall_health : ""
 
+    // page label + a short glyph marker, RTL order
     readonly property var navItems: [
-        "إدخال البيانات",
-        "التحليل والوكلاء",
-        "لوحة التحكم",
-        "التقارير",
-        "الإعدادات",
-        "جهات الاتصال"
+        { label: "إدخال البيانات",   glyph: "▤" },
+        { label: "التحليل والوكلاء", glyph: "◈" },
+        { label: "لوحة التحكم",      glyph: "▦" },
+        { label: "التقارير",         glyph: "▣" },
+        { label: "الإعدادات",        glyph: "⚙" },
+        { label: "جهات الاتصال",     glyph: "☷" }
     ]
+    readonly property string backendLabel: {
+        var b = app.settings.ai_backend
+        return b === "claude" ? "Claude" : b === "openai" ? "OpenAI"
+             : b === "gemini" ? "Gemini" : b === "azure"  ? "Azure" : "Ollama"
+    }
+
+    // pages can request navigation (empty-state quick actions)
+    Connections {
+        target: app
+        function onNavRequested(i) { root.currentIndex = i }
+    }
 
     LayoutMirroring.enabled: true
     LayoutMirroring.childrenInherit: true
@@ -35,7 +47,7 @@ Item {
         // ═══════════ sidebar (leading edge → right in RTL) ═══════════
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 232
+            Layout.preferredWidth: 256
             color: Theme.colors.panel
             // hairline on the inner (content-facing) edge
             Rectangle {
@@ -47,55 +59,79 @@ Item {
                 anchors.fill: parent
                 spacing: 0
 
-                // brand
-                ColumnLayout {
+                // ── brand: mark + wordmark ──
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.margins: 24
-                    spacing: 2
-                    Text {
-                        text: "مرصد"
-                        font.family: Theme.fonts.display; font.pixelSize: 24; font.bold: true
-                        color: Theme.colors.ink
+                    Layout.topMargin: 26; Layout.leftMargin: 22; Layout.rightMargin: 22
+                    spacing: 12
+                    ColumnLayout {
+                        spacing: 1
+                        Layout.fillWidth: true
+                        Text {
+                            text: "مرصد"
+                            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.hero; font.bold: true
+                            color: Theme.colors.ink
+                        }
+                        Text {
+                            text: "ذكاء المشاريع — LTT 4G/5G"
+                            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                            color: Theme.colors.ink3
+                        }
                     }
-                    Text {
-                        text: "ذكاء المشاريع — LTT 4G/5G"
-                        font.family: Theme.fonts.body; font.pixelSize: 11
-                        color: Theme.colors.ink3
+                    Image {
+                        source: "../assets/marsad.png"
+                        sourceSize.width: 40; sourceSize.height: 40
+                        Layout.preferredWidth: 40; Layout.preferredHeight: 40
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true; asynchronous: true
                     }
                 }
-                Rectangle { Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 24; height: 1; color: Theme.colors.border }
+                Rectangle { Layout.fillWidth: true; Layout.topMargin: 20; Layout.leftMargin: 22; Layout.rightMargin: 22; height: 1; color: Theme.colors.border }
 
-                // nav
+                // ── nav ──
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.topMargin: 12
-                    spacing: 2
+                    Layout.topMargin: 14; Layout.leftMargin: 12; Layout.rightMargin: 12
+                    spacing: 3
                     Repeater {
                         model: root.navItems
                         delegate: Item {
                             Layout.fillWidth: true
-                            implicitHeight: 44
+                            implicitHeight: 46
                             readonly property bool active: root.currentIndex === index
 
+                            // rounded pill
                             Rectangle {
                                 anchors.fill: parent
-                                color: active ? Theme.colors.accentBg : (hover.hovered ? Theme.colors.fill : "transparent")
+                                radius: 10
+                                color: active ? Theme.colors.accentSoft : (hover.hovered ? Theme.colors.fill : "transparent")
                             }
                             // leading-edge marker (right in RTL)
                             Rectangle {
-                                anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
-                                width: 3
-                                color: active ? Theme.colors.accent : "transparent"
+                                anchors { verticalCenter: parent.verticalCenter; right: parent.right; rightMargin: 6 }
+                                width: 3; height: active ? 22 : 0; radius: 2
+                                color: Theme.colors.accent
+                                Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutQuart } }
                             }
-                            Text {
+                            RowLayout {
                                 anchors {
-                                    right: parent.right; rightMargin: 24
+                                    right: parent.right; rightMargin: 20; left: parent.left; leftMargin: 14
                                     verticalCenter: parent.verticalCenter
                                 }
-                                text: modelData
-                                font.family: Theme.fonts.body; font.pixelSize: 14
-                                font.bold: active
-                                color: active ? Theme.colors.accent : Theme.colors.ink2
+                                spacing: 10
+                                Text {
+                                    text: modelData.label
+                                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
+                                    font.bold: active
+                                    color: active ? Theme.colors.accent : Theme.colors.ink2
+                                    Layout.fillWidth: true
+                                    horizontalAlignment: Text.AlignRight
+                                }
+                                Text {
+                                    text: modelData.glyph
+                                    font.pixelSize: 15
+                                    color: active ? Theme.colors.accent : Theme.colors.ink3
+                                }
                             }
                             HoverHandler { id: hover }
                             TapHandler { onTapped: root.currentIndex = index }
@@ -105,11 +141,11 @@ Item {
 
                 Item { Layout.fillHeight: true }
 
-                // footer meta — reads as an official reference line
+                // ── footer: engine status + dual (Hijri · Gregorian) date ──
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.margins: 24
-                    spacing: 6
+                    Layout.margins: 22
+                    spacing: 7
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.colors.border }
                     RowLayout {
                         Layout.fillWidth: true
@@ -121,14 +157,21 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                         }
                         Text {
-                            text: "Ollama " + root.ollamaStatus
-                            font.family: Theme.fonts.body; font.pixelSize: 11
+                            text: root.backendLabel + " — " + root.ollamaStatus
+                            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                             color: Theme.colors.ink2
                         }
                         Item { Layout.fillWidth: true }
                     }
                     Text {
-                        text: "LTT-PMO" + (root.reportDate !== "" ? " · " + root.reportDate : "")
+                        text: app.todayLabel
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                        color: Theme.colors.ink3
+                    }
+                    Text {
+                        text: "منظومة LTT-PMO"
                         font.family: Theme.fonts.mono; font.pixelSize: 10
                         color: Theme.colors.ink3
                         LayoutMirroring.enabled: false

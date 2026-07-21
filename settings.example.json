@@ -3,6 +3,21 @@
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3.2",
   "claude_api_key": "",
+  "claude_model": "claude-opus-4-5",
+
+  "openai_api_key": "",
+  "openai_base_url": "https://api.openai.com/v1",
+  "openai_model": "gpt-4o-mini",
+
+  "gemini_api_key": "",
+  "gemini_model": "gemini-2.0-flash",
+
+  "azure_endpoint": "",
+  "azure_api_key": "",
+  "azure_deployment": "",
+  "azure_api_version": "2024-06-01",
+
+  "ai_timeout": 180,
 
   "email_user": "",
   "email_password": "",
@@ -11,6 +26,9 @@
   "smtp_port": 587,
   "report_recipients": [],
   "erp_folder": "",
+
+  "whatsapp_enabled": false,
+  "whatsapp_port": 5051,
 
   "email_dept_map": {
     "ran@example.com":         "ran",

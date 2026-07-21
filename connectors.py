@@ -323,11 +323,16 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
 """
 
     @staticmethod
-    def save_bridge_file():
-        """حفظ ملف Node.js Bridge"""
-        out = Path(__file__).parent / "whatsapp_bridge.js"
-        with open(out, "w", encoding="utf-8") as f:
-            f.write(WhatsAppHelper.WHATSAPP_BRIDGE_JS)
+    def save_bridge_file(port: int = 5051):
+        """حفظ ملف Node.js Bridge في مجلد البيانات مع حقن منفذ المستقبِل."""
+        try:
+            from core.paths import DATA_DIR
+            out = DATA_DIR / "whatsapp_bridge.js"
+        except Exception:
+            out = Path(__file__).parent / "whatsapp_bridge.js"
+        js = WhatsAppHelper.WHATSAPP_BRIDGE_JS.replace(
+            "localhost:5051", f"localhost:{int(port)}")
+        out.write_text(js, encoding="utf-8")
         return str(out)
 
     @staticmethod
@@ -371,12 +376,211 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
 
 
 # ════════════════════════════════════════════════════
+# مستقبِل رسائل واتساب — خادم HTTP محلي يستقبل من جسر Baileys
+# WhatsApp receiver — local HTTP server the Node/Baileys bridge POSTs to
+# ════════════════════════════════════════════════════
+class WhatsAppReceiver:
+    """يستمع على 127.0.0.1:<port>/wa_message ويحوّل كل رسالة إلى تقرير عبر
+    on_message([report]). stdlib فقط — لا تبعيات جديدة."""
+
+    def __init__(self, port: int, on_message, dept_fn=None, logger=print):
+        self.port       = int(port)
+        self.on_message = on_message
+        self.dept_fn    = dept_fn or (lambda gid: "admin")
+        self.log        = logger
+        self._server    = None
+        self._thread    = None
+
+    def start(self):
+        import http.server
+        recv = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):   # اكتم سجل الوصول
+                pass
+
+            def _ok(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def do_GET(self):
+                self._ok()
+
+            def do_POST(self):
+                if self.path.rstrip("/") != "/wa_message":
+                    self.send_response(404); self.end_headers(); return
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    data   = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    self.send_response(400); self.end_headers(); return
+                text = (data.get("text") or "").strip()
+                gid  = data.get("group_id", "")
+                if text:
+                    rep = {
+                        "id"     : f"whatsapp_{int(time.time()*1000)}",
+                        "source" : "whatsapp",
+                        "dept"   : recv.dept_fn(gid),
+                        "from"   : data.get("sender") or gid or "واتساب",
+                        "date"   : datetime.date.today().isoformat(),
+                        "content": text,
+                    }
+                    try:
+                        recv.on_message([rep])
+                        log.info(f"واتساب: رسالة من [{rep['from']}] ← [{rep['dept']}]")
+                    except Exception as e:
+                        log.warning(f"واتساب: خطأ في المعالجة: {e}")
+                self._ok()
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        self.log(f"[WA] المستقبِل يعمل على 127.0.0.1:{self.port}")
+
+    def stop(self):
+        if self._server:
+            try:
+                self._server.shutdown()
+                self._server.server_close()
+            except Exception:
+                pass
+            self._server = None
+
+
+# ════════════════════════════════════════════════════
+# قارئ الملفات المشترك — يُستخدم من ERP ومن رفع الملفات اليدوي
+# Shared file reader — used by the ERP watcher and manual upload
+# ════════════════════════════════════════════════════
+# الامتدادات المدعومة كتقارير ميدانية
+DOC_PATTERNS = ["*.xlsx", "*.xls", "*.csv", "*.json", "*.txt", "*.pdf", "*.docx"]
+
+
+def guess_dept(filename: str) -> str:
+    """محاولة تخمين القسم من اسم الملف"""
+    fl = filename.lower()
+    mapping = {
+        "ran"      : "ran",   "radio"   : "ran",
+        "core"     : "core",  "network" : "core",
+        "quality"  : "quality","جودة"   : "quality",
+        "safety"   : "safety", "سلامة"  : "safety",
+        "civil"    : "civil",  "انشاء"  : "civil",
+        "cost"     : "cost",   "تكالف"  : "cost",
+        "finance"  : "cost",   "مالية"  : "cost",
+        "contract" : "contract","عقود"  : "contract",
+        "procure"  : "procure","مشتريات": "procure",
+        "supply"   : "supply", "مخازن"  : "supply",
+        "schedule" : "schedule","جدول"  : "schedule",
+    }
+    for key, dept in mapping.items():
+        if key in fl:
+            return dept
+    return "admin"
+
+
+def _read_excel(fpath: Path) -> str:
+    try:
+        import openpyxl
+        wb   = openpyxl.load_workbook(fpath, read_only=True, data_only=True)
+        rows = []
+        for ws in wb.worksheets[:3]:   # أول 3 أوراق فقط
+            rows.append(f"=== ورقة: {ws.title} ===")
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i > 200: break        # أول 200 صف
+                cells = [str(c) if c is not None else "" for c in row]
+                line  = " | ".join(cells).strip(" |")
+                if line:
+                    rows.append(line)
+        return "\n".join(rows)
+    except ImportError:
+        return "[يحتاج مكتبة openpyxl — pip install openpyxl]"
+    except Exception as e:
+        return f"[خطأ في قراءة Excel: {e}]"
+
+
+def _read_csv(fpath: Path) -> str:
+    import csv
+    rows = []
+    with open(fpath, encoding="utf-8-sig", errors="ignore") as f:
+        reader = csv.reader(f)
+        for i, row in enumerate(reader):
+            if i > 500: break
+            rows.append(" | ".join(row))
+    return "\n".join(rows)
+
+
+def _read_json(fpath: Path) -> str:
+    data = json.loads(fpath.read_text(encoding="utf-8"))
+    return json.dumps(data, ensure_ascii=False, indent=2)[:5000]
+
+
+def _read_pdf(fpath: Path) -> str:
+    try:
+        import PyPDF2
+        with open(fpath, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            return "\n".join(p.extract_text() or "" for p in reader.pages)
+    except ImportError:
+        return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
+    except Exception as e:
+        return f"[خطأ في PDF: {e}]"
+
+
+def _read_docx(fpath: Path) -> str:
+    try:
+        import docx
+        doc = docx.Document(str(fpath))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except ImportError:
+        return "[يحتاج مكتبة python-docx — pip install python-docx]"
+    except Exception as e:
+        return f"[خطأ في Word: {e}]"
+
+
+def read_file_to_report(fpath, source: str = "upload",
+                        dept: str = None, from_label: str = None) -> dict | None:
+    """قراءة ملف واحد وتحويله إلى تقرير — يدعم xlsx/xls/csv/json/txt/pdf/docx.
+    يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ."""
+    fpath = Path(fpath)
+    ext   = fpath.suffix.lower()
+    dept  = dept or guess_dept(fpath.name)
+
+    if ext in (".xlsx", ".xls"):
+        content = _read_excel(fpath)
+    elif ext == ".csv":
+        content = _read_csv(fpath)
+    elif ext == ".json":
+        content = _read_json(fpath)
+    elif ext == ".txt":
+        content = fpath.read_text(encoding="utf-8", errors="ignore")
+    elif ext == ".pdf":
+        content = _read_pdf(fpath)
+    elif ext == ".docx":
+        content = _read_docx(fpath)
+    else:
+        return None
+
+    if not content:
+        return None
+
+    return {
+        "id"     : f"{source}_{fpath.stem}_{int(time.time())}",
+        "source" : source,
+        "dept"   : dept,
+        "from"   : from_label or fpath.name,
+        "date"   : datetime.date.today().isoformat(),
+        "content": content,
+    }
+
+
+# ════════════════════════════════════════════════════
 # 3. موصّل ERP — يقرأ ملفات Excel/CSV من مجلد
 # ════════════════════════════════════════════════════
 class ERPConnector:
     """
     يراقب مجلداً محدداً ويقرأ ملفات ERP تلقائياً
-    يدعم: Excel (.xlsx/.xls), CSV, JSON
+    يدعم: Excel (.xlsx/.xls), CSV, JSON, TXT, PDF, Word (.docx)
     """
 
     def __init__(self, watch_folder: str = "", dept_map: dict = None):
@@ -393,8 +597,7 @@ class ERPConnector:
         if not self.folder or not self.folder.exists():
             return []
         reports = []
-        patterns = ["*.xlsx", "*.xls", "*.csv", "*.json", "*.txt", "*.pdf"]
-        for pattern in patterns:
+        for pattern in DOC_PATTERNS:
             for fpath in self.folder.glob(pattern):
                 if fpath.name in self._seen:
                     continue
@@ -409,98 +612,8 @@ class ERPConnector:
         return reports
 
     def _read_file(self, fpath: Path) -> dict | None:
-        ext  = fpath.suffix.lower()
-        dept = self._guess_dept(fpath.name)
-
-        if ext in (".xlsx", ".xls"):
-            content = self._read_excel(fpath)
-        elif ext == ".csv":
-            content = self._read_csv(fpath)
-        elif ext == ".json":
-            content = self._read_json(fpath)
-        elif ext == ".txt":
-            content = fpath.read_text(encoding="utf-8", errors="ignore")
-        elif ext == ".pdf":
-            content = self._read_pdf(fpath)
-        else:
-            return None
-
-        if not content:
-            return None
-
-        return {
-            "id"     : f"erp_{fpath.stem}_{int(time.time())}",
-            "source" : "erp",
-            "dept"   : dept,
-            "from"   : f"ERP: {fpath.name}",
-            "date"   : datetime.date.today().isoformat(),
-            "content": content,
-        }
-
-    def _read_excel(self, fpath: Path) -> str:
-        try:
-            import openpyxl
-            wb   = openpyxl.load_workbook(fpath, read_only=True, data_only=True)
-            rows = []
-            for ws in wb.worksheets[:3]:   # أول 3 أوراق فقط
-                rows.append(f"=== ورقة: {ws.title} ===")
-                for i, row in enumerate(ws.iter_rows(values_only=True)):
-                    if i > 200: break        # أول 200 صف
-                    cells = [str(c) if c is not None else "" for c in row]
-                    line  = " | ".join(cells).strip(" |")
-                    if line:
-                        rows.append(line)
-            return "\n".join(rows)
-        except ImportError:
-            return "[يحتاج مكتبة openpyxl — pip install openpyxl]"
-        except Exception as e:
-            return f"[خطأ في قراءة Excel: {e}]"
-
-    def _read_csv(self, fpath: Path) -> str:
-        import csv
-        rows = []
-        with open(fpath, encoding="utf-8-sig", errors="ignore") as f:
-            reader = csv.reader(f)
-            for i, row in enumerate(reader):
-                if i > 500: break
-                rows.append(" | ".join(row))
-        return "\n".join(rows)
-
-    def _read_json(self, fpath: Path) -> str:
-        data = json.loads(fpath.read_text(encoding="utf-8"))
-        return json.dumps(data, ensure_ascii=False, indent=2)[:5000]
-
-    def _read_pdf(self, fpath: Path) -> str:
-        try:
-            import PyPDF2
-            with open(fpath, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
-                return "\n".join(p.extract_text() or "" for p in reader.pages)
-        except ImportError:
-            return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
-        except Exception as e:
-            return f"[خطأ في PDF: {e}]"
-
-    def _guess_dept(self, filename: str) -> str:
-        """محاولة تخمين القسم من اسم الملف"""
-        fl = filename.lower()
-        mapping = {
-            "ran"      : "ran",   "radio"   : "ran",
-            "core"     : "core",  "network" : "core",
-            "quality"  : "quality","جودة"   : "quality",
-            "safety"   : "safety", "سلامة"  : "safety",
-            "civil"    : "civil",  "انشاء"  : "civil",
-            "cost"     : "cost",   "تكالف"  : "cost",
-            "finance"  : "cost",   "مالية"  : "cost",
-            "contract" : "contract","عقود"  : "contract",
-            "procure"  : "procure","مشتريات": "procure",
-            "supply"   : "supply", "مخازن"  : "supply",
-            "schedule" : "schedule","جدول"  : "schedule",
-        }
-        for key, dept in mapping.items():
-            if key in fl:
-                return dept
-        return "admin"
+        return read_file_to_report(fpath, source="erp",
+                                   from_label=f"ERP: {fpath.name}")
 
     def start_watching(self, interval_seconds: int, callback):
         """مراقبة المجلد باستمرار"""
@@ -539,9 +652,23 @@ class ConnectorHub:
         self._buffer  = []
         self._lock    = threading.Lock()
         self._log_fn  = print
+        self.whatsapp = None
 
     def set_logger(self, fn):
         self._log_fn = fn
+
+    # ── واتساب ──
+    def _wa_dept(self, group_id: str) -> str:
+        groups = self.settings.get("whatsapp_groups", {})
+        return groups.get(group_id) or groups.get(str(group_id), "admin")
+
+    def start_whatsapp(self, port: int = 5051):
+        """بدء مستقبِل واتساب — الرسائل الواردة تدخل نفس الـ buffer الذي يفرّغه
+        collect_all()، تماماً مثل البريد و ERP."""
+        if self.whatsapp:
+            self.whatsapp.stop()
+        self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept, self._log_fn)
+        self.whatsapp.start()
 
     def _append(self, reports: list):
         with self._lock:
@@ -592,6 +719,8 @@ class ConnectorHub:
     def stop_all(self):
         self.email.stop()
         self.erp.stop()
+        if self.whatsapp:
+            self.whatsapp.stop()
 
     def test_email(self) -> tuple:
         return self.email.test_connection()

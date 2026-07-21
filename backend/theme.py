@@ -26,6 +26,7 @@ _COLORS = {
     "accentHi": "#12897757",
     "accentLo": "#0B564B",
     "accentBg": "#E6F1EF",   # accent tint background
+    "accentSoft": "#EEF6F4", # softer accent wash — nav pill / quiet panels
     # status — dark, print-safe; small dot / single word only
     "green":    "#1E7A52",   # good / safe / complete
     "amber":    "#946200",   # medium / warning (dark ochre; bright amber fails on white)
@@ -43,6 +44,17 @@ _FONTS = {
     "display": "Noto Kufi Arabic",
     "body":    "Noto Sans Arabic",
     "mono":    "JetBrains Mono",
+}
+
+# Arabic-forward type scale (px). Kufi carries display; Sans carries reading.
+_FS = {
+    "hero":    34,   # page/brand hero
+    "display": 26,   # page titles
+    "title":   20,   # sub-headings
+    "section": 17,   # section labels
+    "body":    14,   # reading
+    "small":   13,   # dense labels
+    "caption": 11,   # captions / meta
 }
 
 # fixed Arabic status literals -> semantic color key
@@ -63,6 +75,10 @@ class Theme(QObject):
     @Property("QVariantMap", constant=True)
     def fonts(self):
         return _FONTS
+
+    @Property("QVariantMap", constant=True)
+    def fs(self):
+        return _FS
 
     @Slot(int, result=int)
     def sp(self, n):

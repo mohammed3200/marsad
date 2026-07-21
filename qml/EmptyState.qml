@@ -6,15 +6,16 @@ Item {
     property string icon: "◔"
     property string message: ""
     property string hint: ""
+    property alias actions: actionHolder.data   // optional buttons row
 
     ColumnLayout {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 420)
-        spacing: 8
+        width: Math.min(parent.width - 48, 440)
+        spacing: 9
         Text {
             text: es.icon
             Layout.alignment: Qt.AlignHCenter
-            font.pixelSize: 40; color: Theme.colors.ink3
+            font.pixelSize: 44; color: Theme.colors.ink3
         }
         Text {
             text: es.message
@@ -22,8 +23,8 @@ Item {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            font.family: Theme.fonts.body; font.pixelSize: 15
-            color: Theme.colors.ink2
+            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.title
+            color: Theme.colors.ink
         }
         Text {
             text: es.hint; visible: es.hint !== ""
@@ -31,8 +32,14 @@ Item {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            font.family: Theme.fonts.body; font.pixelSize: 12
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink3
+        }
+        RowLayout {
+            id: actionHolder
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 6
+            spacing: 10
         }
     }
 }

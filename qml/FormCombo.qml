@@ -9,6 +9,7 @@ ColumnLayout {
     property var options: []
     property alias currentIndex: box.currentIndex
     readonly property string value: box.currentText
+    signal activated(int index)   // fired on user selection (not on programmatic set)
     Layout.fillWidth: true
     spacing: 5
 
@@ -23,6 +24,7 @@ ColumnLayout {
         Layout.fillWidth: true
         model: field.options
         implicitHeight: 40
+        onActivated: field.activated(index)
 
         contentItem: Text {
             text: box.displayText

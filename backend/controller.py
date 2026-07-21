@@ -13,7 +13,7 @@ from PySide6.QtGui import QDesktopServices
 
 from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel
 from core.paths import DATA_DIR, BUNDLE_DIR
-from connectors import ConnectorHub, build_report_html
+from connectors import ConnectorHub, build_report_html, read_file_to_report
 from .settings_bridge import load_settings, save_settings
 from .models import AgentsModel, ReportsModel
 from .analysis_worker import AnalysisWorker
@@ -33,10 +33,12 @@ class AppController(QObject):
     analysisDone      = Signal()
     analysisFailed    = Signal(str)
     connectionTested  = Signal(bool, str)
+    emailTested       = Signal(bool, str)
     exportDone        = Signal(str)          # path
     exportFailed      = Signal(str)
     reportsChanged    = Signal()
     notify            = Signal(str)          # transient user message
+    navRequested      = Signal(int)          # page index to switch to
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,6 +58,7 @@ class AppController(QObject):
         self._worker   = None
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._load_latest()
+        self._start_whatsapp_if_enabled()
 
     # ───────────────────────── properties ─────────────────────────
     @Property("QVariant", notify=dashModelChanged)
@@ -94,6 +97,15 @@ class AppController(QObject):
     def settings(self):
         return self._settings
 
+    @Property(str, constant=True)
+    def todayLabel(self):
+        from core.hijri import dual_label
+        return dual_label()
+
+    @Slot(int)
+    def goTo(self, index):
+        self.navRequested.emit(index)
+
     # ───────────────────────── input actions ─────────────────────────
     @Slot()
     def loadSamples(self):
@@ -117,6 +129,51 @@ class AppController(QObject):
                              if reps else "لا توجد تقارير جديدة")
         except Exception as e:
             self.notify.emit(f"تعذّر الجمع: {e}")
+
+    @Slot()
+    def pickReportFiles(self):
+        """فتح مربّع اختيار ملفات أصلي (native) وإضافة المختار — لا يعتمد على
+        QtQuick.Dialogs حتى يعمل في كل البيئات."""
+        from PySide6.QtWidgets import QFileDialog
+        paths, _ = QFileDialog.getOpenFileNames(
+            None, "اختر ملفات التقارير", "",
+            "مستندات (*.xlsx *.xls *.csv *.pdf *.txt *.json *.docx);;كل الملفات (*)")
+        if paths:
+            self.addFiles(paths)
+
+    @Slot(result=str)
+    def pickErpFolder(self):
+        """اختيار مجلد ERP عبر مربّع أصلي — يُعيد المسار أو نصاً فارغاً."""
+        from PySide6.QtWidgets import QFileDialog
+        return QFileDialog.getExistingDirectory(None, "اختر مجلد ملفات ERP") or ""
+
+    @Slot("QVariant")
+    def addFiles(self, urls):
+        """قراءة ملفات مختارة (Word/Excel/PDF/CSV/TXT/JSON) وإضافتها كتقارير."""
+        added, failed = 0, []
+        for u in (urls or []):
+            p = self._localfile(str(u))
+            if not p:
+                continue
+            try:
+                rep = read_file_to_report(p, source="ملف")
+                if rep:
+                    self._reports.add(rep)
+                    added += 1
+                else:
+                    failed.append(Path(p).name)
+            except Exception:
+                failed.append(Path(p).name)
+        if added:
+            self.reportsChanged.emit()
+        if added and failed:
+            self.notify.emit(f"أُضيف {added} ملف — تعذّر: {'، '.join(failed)}")
+        elif added:
+            self.notify.emit(f"أُضيف {added} ملف")
+        elif failed:
+            self.notify.emit(f"تعذّرت قراءة: {'، '.join(failed)}")
+        else:
+            self.notify.emit("لم تُختَر ملفات")
 
     @Slot("QVariant")
     def addReport(self, report):
@@ -223,7 +280,8 @@ class AppController(QObject):
         if not self._results:
             self.notify.emit("لا توجد نتائج لإرسالها")
             return
-        recipients = list(self._settings.get("email_dept_map", {}).keys())
+        recipients = (self._settings.get("report_recipients")
+                      or list(self._settings.get("email_dept_map", {}).keys()))
         if not recipients:
             self.notify.emit("لا يوجد مستلمون مضبوطون في الإعدادات")
             return
@@ -249,7 +307,25 @@ class AppController(QObject):
             self._settings.update(dict(values))
         save_settings(self._settings)
         self._ai.settings = self._settings
+        # الموصّلات تلتقط الإعدادات عند الإنشاء — أعد بناء الـ hub حتى تسري
+        # بيانات البريد / مجلد ERP / واتساب الجديدة فوراً.
+        self._rebuild_hub()
         self.notify.emit("حُفظت الإعدادات")
+
+    def _rebuild_hub(self):
+        try:
+            self._hub.stop_all()
+        except Exception:
+            pass
+        self._hub = ConnectorHub(self._settings, self._contacts)
+        self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
+        self._start_whatsapp_if_enabled()
+
+    @Slot()
+    def testEmail(self):
+        ok, msg = self._hub.test_email()
+        self.emailTested.emit(ok, msg)
+        self.notify.emit(msg)
 
     @Slot(result="QVariant")
     def getSettings(self):
@@ -283,6 +359,48 @@ class AppController(QObject):
         self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
         save_settings(self._settings)
         self.notify.emit("تمت مزامنة جهات الاتصال مع الإعدادات")
+
+    # ───────────────────────── whatsapp ─────────────────────────
+    def _start_whatsapp_if_enabled(self):
+        if not self._settings.get("whatsapp_enabled"):
+            return
+        try:
+            port = int(self._settings.get("whatsapp_port", 5051))
+            self._hub.start_whatsapp(port)
+            self.logMessage.emit(f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
+        except Exception as e:
+            self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {e}")
+
+    @Slot()
+    def generateWhatsAppBridge(self):
+        from connectors import WhatsAppHelper
+        try:
+            port = int(self._settings.get("whatsapp_port", 5051))
+            path = WhatsAppHelper.save_bridge_file(port)
+            self.notify.emit(f"أُنشئ ملف الجسر: {path}")
+        except Exception as e:
+            self.notify.emit(f"تعذّر إنشاء الجسر: {e}")
+
+    @Slot()
+    def checkNode(self):
+        from connectors import WhatsAppHelper
+        ok, msg = WhatsAppHelper.check_nodejs()
+        self.notify.emit(f"Node.js: {msg}" if ok else msg)
+
+    # ───────────────────────── dashboard ─────────────────────────
+    @Slot()
+    def clearDashboard(self):
+        """مسح لوحة التحكم — يحذف latest.json ويُفرّغ النتائج المعروضة."""
+        try:
+            if LATEST_F.exists():
+                LATEST_F.unlink()
+        except Exception:
+            pass
+        self._results, self._dash = {}, {}
+        self._date = ""
+        self.dashModelChanged.emit()
+        self.reportDateChanged.emit()
+        self.notify.emit("مُسحت لوحة التحكم")
 
     # ───────────────────────── internals ─────────────────────────
     def _set_busy(self, v):

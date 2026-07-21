@@ -12,12 +12,97 @@ Item {
     readonly property bool hasData: model && model.overall_health !== undefined
     readonly property string health: (model && model.overall_health) ? model.overall_health : "—"
 
-    EmptyState {
+    // ── first-run quick-start (no data yet) ──
+    Item {
         anchors.fill: parent
         visible: !page.hasData
-        icon: "▢"
-        message: "لا يوجد تقرير حالة بعد"
-        hint: "شغّل التحليل من تبويب «التحليل والوكلاء» ليظهر ملخّص الحالة وخطة العمل"
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 64, 560)
+            spacing: 20
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Text {
+                    text: "مرحباً بك في مرصد"
+                    Layout.alignment: Qt.AlignHCenter
+                    font.family: Theme.fonts.display; font.pixelSize: Theme.fs.display; font.bold: true
+                    color: Theme.colors.ink
+                }
+                Text {
+                    text: "لا يوجد تقرير حالة بعد — ابدأ بثلاث خطوات:"
+                    Layout.alignment: Qt.AlignHCenter
+                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
+                    color: Theme.colors.ink2
+                }
+            }
+
+            // three numbered steps
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                Repeater {
+                    model: [
+                        { n: "١", title: "اضبط محرّك الذكاء الاصطناعي", desc: "اختر المزوّد وأدخِل المفاتيح", page: 4, cta: "الإعدادات" },
+                        { n: "٢", title: "أضِف تقارير ميدانية", desc: "يدوياً أو ارفع ملفات أو اجمع من المصادر", page: 0, cta: "إدخال البيانات" },
+                        { n: "٣", title: "شغّل التحليل الذكي", desc: "الوكلاء يحلّلون ويولّدون ملخّص الحالة", page: 1, cta: "التحليل" }
+                    ]
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 74
+                        color: "transparent"
+                        // hairline separators between steps
+                        Rectangle {
+                            visible: index > 0
+                            anchors { top: parent.top; left: parent.left; right: parent.right }
+                            height: 1; color: Theme.colors.border
+                        }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4; anchors.rightMargin: 4
+                            spacing: 16
+                            // number badge (leading = right in RTL)
+                            Rectangle {
+                                width: 34; height: 34; radius: 17
+                                color: Theme.colors.accentSoft
+                                Layout.alignment: Qt.AlignVCenter
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.n
+                                    font.family: Theme.fonts.display; font.pixelSize: 16; font.bold: true
+                                    color: Theme.colors.accent
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: modelData.title
+                                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body; font.bold: true
+                                    color: Theme.colors.ink
+                                }
+                                Text {
+                                    text: modelData.desc
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                                    color: Theme.colors.ink3
+                                }
+                            }
+                            AppButton {
+                                text: modelData.cta
+                                kind: index === 0 ? "accent" : "ghost"
+                                implicitHeight: 34
+                                Layout.alignment: Qt.AlignVCenter
+                                onClicked: app.goTo(modelData.page)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     ScrollView {
@@ -57,6 +142,11 @@ Item {
                             color: Theme.colors.ink3
                             LayoutMirroring.enabled: false
                             Layout.alignment: Qt.AlignVCenter
+                        }
+                        AppButton {
+                            text: "مسح اللوحة"; kind: "ghost"; implicitHeight: 30
+                            Layout.alignment: Qt.AlignVCenter
+                            onClicked: app.clearDashboard()
                         }
                     }
                     // one-line health statement

@@ -22,8 +22,14 @@ datas = [
 binaries = []
 hiddenimports = []
 
-for pkg in ("reportlab", "openpyxl", "PyPDF2"):
+for pkg in ("reportlab", "openpyxl", "PyPDF2", "docx"):
     hiddenimports += collect_submodules(pkg)
+
+# python-docx pulls lxml (C-extension) — collect its binaries too.
+_lx_datas, _lx_bins, _lx_hidden = collect_all("lxml")
+datas += _lx_datas
+binaries += _lx_bins
+hiddenimports += _lx_hidden
 
 _ps_datas, _ps_bins, _ps_hidden = collect_all("PySide6")
 datas += _ps_datas

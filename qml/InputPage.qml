@@ -17,7 +17,8 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 10
-        AppButton { text: "تحميل نماذج"; kind: "accent"; onClicked: app.loadSamples() }
+        AppButton { text: "تحميل نماذج تجريبية"; kind: "accent"; onClicked: app.loadSamples() }
+        AppButton { text: "رفع ملفات"; kind: "ghost"; onClicked: app.pickReportFiles() }
         AppButton { text: "جمع من المصادر"; kind: "ghost"; onClicked: app.collectReports() }
         Item { Layout.fillWidth: true }
         AppButton {

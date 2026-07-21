@@ -34,27 +34,48 @@ every layer. Changing an agent's output schema means updating its consumers (`co
 `connectors.build_report_html`, and the QML that reads it) too.
 
 **`core/`** — UI-agnostic logic (no Qt import):
-- `engine.py` — `AIEngine.ask()` (Ollama/Claude → dict), `AGENT_PROMPTS` (11 agents), `WORKER_AGENTS`
+- `engine.py` — `AIEngine.ask()` dispatches to five backends (`ai_backend` ∈ ollama·claude·openai·gemini·
+  azure; `openai` is an OpenAI-compatible adapter — editable `openai_base_url` covers OpenRouter/Groq/
+  Together/DeepSeek/LM Studio). `AGENT_PROMPTS` (11 agents), `WORKER_AGENTS`
   (10 domain agents), `AgentsEngine.run_all(reports, progress_cb, agent_cb)`. Runs each worker over the
-  formatted report text, feeds all outputs into the `chief` coordinator (`overall_health`,
-  `executive_summary`, `kpis`, `top_actions`), saves `reports/results_<ts>.json` + `reports/latest.json`.
+  formatted report text, feeds only the **successful** worker outputs into the `chief` coordinator, saves
+  `reports/results_<ts>.json` + `reports/latest.json`. `_ensure_chief_schema()` guarantees the chief dict
+  always has `overall_health`/`executive_summary`/`kpis`/`top_actions`/`dept_scores`/`achievements` (even
+  on LLM failure) so the dashboard + exporters never break. Request timeout is `ai_timeout` (settings,
+  default 180s); `AIEngine._parse_json` strips ```json fences + extracts the first `{…}` for both backends.
   `agent_cb(agent_id, state)` with state ∈ {running, done, error} drives live UI telemetry.
 - `contacts.py` — `ContactsDB` (JSON org chart in `data/contacts.json`) + `export_to_config()`
   (email→dept / whatsapp→dept maps the connectors route on).
+- `hijri.py` — self-contained Gregorian→Hijri conversion (no dependency); `dual_label()` →
+  «١٤ محرّم ١٤٤٨ هـ · 2026-07-21» (Arabic-Indic numerals + Arabic month names). Exposed as
+  `app.todayLabel`.
 - `exporters.py` — `export_pdf(results, path)` + `export_excel(results, path)` (reportlab/openpyxl, RTL).
 
-**`connectors.py`** — report ingestion + outbound email (unchanged, stdlib only): `EmailConnector`
-(IMAP/SMTP), `ERPConnector` (folder watch), `WhatsAppHelper` (emits a Baileys bridge), `ConnectorHub`
-(`collect_all()` facade), `build_report_html()`.
+**`connectors.py`** — report ingestion + outbound email: `EmailConnector` (IMAP/SMTP), `ERPConnector`
+(folder watch), `WhatsAppHelper` (generates the Baileys bridge JS), `WhatsAppReceiver` (stdlib
+`http.server` on `127.0.0.1:<whatsapp_port>/wa_message` — the Node bridge POSTs here; each message becomes
+a `whatsapp` report), `ConnectorHub` (`collect_all()` facade + `start_whatsapp(port)`),
+`build_report_html()`. Shared module-level `read_file_to_report(path, source, dept, from_label)` +
+`guess_dept()` + `DOC_PATTERNS` turn one file into a report dict — used by both the ERP watcher and the
+input-page upload button. Supported: `.xlsx/.xls/.csv/.json/.txt/.pdf/.docx` (Word needs `python-docx`;
+Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string if its lib is missing).
 
 **`backend/`** — the Qt/QML bridge:
-- `theme.py` — `Theme(QObject)`: design tokens as `colors`/`fonts` QVariantMaps + `statusColor(literal)`
-  mapping the fixed Arabic status words to colours. Exposed to QML as the `Theme` context property.
+- `theme.py` — `Theme(QObject)`: design tokens as `colors`/`fonts`/`fs` QVariantMaps (`fs` = the Arabic
+  type scale: hero/display/title/section/body/small/caption px) + `statusColor(literal)` mapping the fixed
+  Arabic status words to colours. Exposed to QML as the `Theme` context property.
 - `controller.py` — `AppController(QObject)`: the single object QML talks to (context property `app`).
   Owns settings, `ContactsDB`, `ConnectorHub`, `AIEngine`/`AgentsEngine`. Properties: `dashModel`,
   `reportDate`, `ollamaOnline/Status`, `busy`, `agentsModel`, `reportsModel`, `reportCount`. Slots:
-  `runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `exportPdf/Excel`, `openReportsFolder`,
-  `sendEmailReport`, `testConnection`, `saveSettings`, contacts CRUD + `syncContacts`.
+  `runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `addFiles` (upload picked files),
+  `clearDashboard`, `pickReportFiles`/`pickErpFolder` (native `QFileDialog` — the app uses `QApplication`
+  so file/folder pickers work without the fragile `QtQuick.Dialogs` QML module), `goTo(index)` (+
+  `navRequested` signal so empty-state quick-actions switch pages), `exportPdf/Excel`, `openReportsFolder`,
+  `sendEmailReport`, `testConnection`, `testEmail`, `generateWhatsAppBridge`, `checkNode`, `saveSettings`,
+  contacts CRUD + `syncContacts`.
+  `saveSettings` rebuilds the `ConnectorHub` so new email/ERP/WhatsApp config takes effect immediately
+  (connectors snapshot settings at construction). The Settings page configures **all** sources from the
+  UI — no hand-editing `settings.json`.
 - `analysis_worker.py` — `AnalysisWorker` on a `QThread`; wraps `run_all`, re-emits agent/progress/log
   as signals. The worker never touches QML.
 - `models.py` — `AgentsModel` (11 agents + live state) and `ReportsModel` (`QAbstractListModel`s).

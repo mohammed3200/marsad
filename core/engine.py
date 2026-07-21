@@ -26,10 +26,56 @@ class AIEngine:
     def ask(self, system_prompt: str, user_text: str) -> dict:
         """استدعاء نموذج الذكاء الاصطناعي وإرجاع dict"""
         backend = self.settings.get("ai_backend", "ollama")
-        if backend == "claude":
-            return self._ask_claude(system_prompt, user_text)
-        else:
-            return self._ask_ollama(system_prompt, user_text)
+        return {
+            "claude": self._ask_claude,
+            "openai": self._ask_openai,
+            "gemini": self._ask_gemini,
+            "azure":  self._ask_azure,
+        }.get(backend, self._ask_ollama)(system_prompt, user_text)
+
+    @staticmethod
+    def _http_json(url: str, payload: dict, headers: dict, timeout: int) -> dict:
+        """POST JSON، أعِد رداً مُفكَّكاً أو {"error":…}. لا يرفع استثناء أبداً."""
+        import urllib.request, urllib.error
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", **headers}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return {"_ok": json.loads(resp.read())}
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                body = ""
+            return {"error": f"HTTP {e.code}: {body or e.reason}"}
+        except urllib.error.URLError as e:
+            return {"error": f"تعذّر الاتصال: {e.reason}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _timeout(self) -> int:
+        try:
+            return int(self.settings.get("ai_timeout", 180))
+        except (TypeError, ValueError):
+            return 180
+
+    @staticmethod
+    def _parse_json(raw: str) -> dict:
+        """استخراج JSON من رد النموذج — يزيل أسوار ```json ثم يجرّب استخراج {}.
+        يُعيد {"raw":…, "error":"json_parse"} إذا تعذّر."""
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            start = clean.find("{")
+            end   = clean.rfind("}") + 1
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(clean[start:end])
+                except json.JSONDecodeError:
+                    pass
+            return {"raw": raw, "error": "json_parse"}
 
     def _ask_ollama(self, system_prompt: str, user_text: str) -> dict:
         import urllib.request, urllib.error
@@ -48,21 +94,9 @@ class AIEngine:
             method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout()) as resp:
                 data = json.loads(resp.read())
-                raw  = data.get("response", "")
-                # تنظيف JSON
-                clean = raw.replace("```json","").replace("```","").strip()
-                # محاولة أولى: JSON مباشر
-                try:
-                    return json.loads(clean)
-                except json.JSONDecodeError:
-                    # محاولة ثانية: استخراج أول {} من النص
-                    start = clean.find("{")
-                    end   = clean.rfind("}") + 1
-                    if start >= 0 and end > start:
-                        return json.loads(clean[start:end])
-                    return {"raw": raw, "error": "json_parse"}
+                return self._parse_json(data.get("response", ""))
         except urllib.error.URLError as e:
             return {"error": f"تعذر الاتصال بـ Ollama: {e.reason}\nتأكد من تشغيل Ollama أولاً"}
         except Exception as e:
@@ -75,7 +109,7 @@ class AIEngine:
         import urllib.request
         payload = json.dumps({
             "model"     : self.settings.get("claude_model", "claude-opus-4-5"),
-            "max_tokens": 1500,
+            "max_tokens": 4096,
             "system"    : system_prompt,
             "messages"  : [{"role": "user", "content": user_text}]
         }).encode()
@@ -90,27 +124,80 @@ class AIEngine:
             method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout()) as resp:
                 data = json.loads(resp.read())
-                raw  = data["content"][0]["text"]
-                clean = raw.replace("```json","").replace("```","").strip()
-                return json.loads(clean)
+                return self._parse_json(data["content"][0]["text"])
         except Exception as e:
             return {"error": str(e)}
 
+    def _openai_chat(self, base_url: str, api_key: str, model: str,
+                     headers: dict, system_prompt: str, user_text: str) -> dict:
+        """قالب موحّد لكل واجهات OpenAI (OpenAI / متوافق / Azure)."""
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_text},
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+        }
+        if model:
+            payload["model"] = model
+        res = self._http_json(base_url, payload, headers, self._timeout())
+        if "error" in res:
+            return res
+        try:
+            return self._parse_json(res["_ok"]["choices"][0]["message"]["content"])
+        except Exception as e:
+            return {"error": f"رد غير متوقع: {e}"}
+
+    def _ask_openai(self, system_prompt: str, user_text: str) -> dict:
+        api_key = self.settings.get("openai_api_key", "")
+        if not api_key:
+            return {"error": "لم يُضبَط مفتاح OpenAI في الإعدادات"}
+        base = (self.settings.get("openai_base_url") or "https://api.openai.com/v1").rstrip("/")
+        model = self.settings.get("openai_model", "gpt-4o-mini")
+        return self._openai_chat(f"{base}/chat/completions", api_key, model,
+                                 {"Authorization": f"Bearer {api_key}"},
+                                 system_prompt, user_text)
+
+    def _ask_azure(self, system_prompt: str, user_text: str) -> dict:
+        api_key    = self.settings.get("azure_api_key", "")
+        endpoint   = (self.settings.get("azure_endpoint", "") or "").rstrip("/")
+        deployment = self.settings.get("azure_deployment", "")
+        version    = self.settings.get("azure_api_version", "2024-06-01")
+        if not (api_key and endpoint and deployment):
+            return {"error": "أكمل إعداد Azure (endpoint / deployment / مفتاح) في الإعدادات"}
+        url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={version}"
+        return self._openai_chat(url, api_key, "", {"api-key": api_key},
+                                 system_prompt, user_text)
+
+    def _ask_gemini(self, system_prompt: str, user_text: str) -> dict:
+        api_key = self.settings.get("gemini_api_key", "")
+        if not api_key:
+            return {"error": "لم يُضبَط مفتاح Gemini في الإعدادات"}
+        model = self.settings.get("gemini_model", "gemini-2.0-flash")
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={api_key}")
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"parts": [{"text": user_text}]}],
+            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
+        }
+        res = self._http_json(url, payload, {}, self._timeout())
+        if "error" in res:
+            return res
+        try:
+            return self._parse_json(res["_ok"]["candidates"][0]["content"]["parts"][0]["text"])
+        except Exception as e:
+            return {"error": f"رد غير متوقع: {e}"}
+
     def test_connection(self) -> tuple:
-        """اختبار الاتصال بالنموذج"""
-        backend = self.settings.get("ai_backend", "ollama")
-        if backend == "ollama":
-            result = self.ask(
-                "أجب بـ JSON فقط.",
-                'أجب بالتالي: {"status": "ok", "message": "الاتصال ناجح"}'
-            )
-        else:
-            result = self.ask(
-                "أجب بـ JSON فقط.",
-                'أجب بالتالي: {"status": "ok", "message": "Claude متصل"}'
-            )
+        """اختبار الاتصال بالمحرّك المُختار (يعمل لكل المزوّدين عبر ask())."""
+        result = self.ask(
+            "أجب بـ JSON فقط.",
+            'أجب بالتالي حرفياً: {"status":"ok","message":"الاتصال ناجح"}'
+        )
         if "error" in result:
             return False, result["error"]
         return True, result.get("message", "الاتصال ناجح")
@@ -169,6 +256,25 @@ AGENT_PROMPTS = {
 WORKER_AGENTS = ["ops","quality","safety","civil","cost","contract","procure","supply","risk","schedule"]
 
 
+def _ensure_chief_schema(chief: dict) -> dict:
+    """يضمن أن مخرجات وكيل التنسيق تحوي كل المفاتيح التي تقرأها اللوحة والمصدّرات،
+    حتى لو فشل الاستدعاء أو عاد بنص غير صالح — فلا تنكسر الواجهة أبداً."""
+    chief = chief if isinstance(chief, dict) else {}
+    err   = chief.get("error")
+    summary = chief.get("executive_summary")
+    if not summary:
+        summary = (f"تعذّر إكمال التحليل: {err}" if err
+                   else "لم يُنتِج وكيل التنسيق ملخصاً.")
+    return {
+        "overall_health":    chief.get("overall_health", "غير محدد"),
+        "executive_summary": summary,
+        "kpis":              chief.get("kpis", []) or [],
+        "top_actions":       chief.get("top_actions", []) or [],
+        "dept_scores":       chief.get("dept_scores", []) or [],
+        "achievements":      chief.get("achievements", []) or [],
+    }
+
+
 class AgentsEngine:
     def __init__(self, ai: AIEngine, log_fn=None):
         self.ai  = ai
@@ -210,19 +316,25 @@ class AgentsEngine:
             if progress_cb:
                 progress_cb(int((i+1)/total*100))
 
-        # وكيل التنسيق
+        # وكيل التنسيق — يُغذّى فقط بنتائج الوكلاء الناجحة (لا نمرّر أخطاء)
         self.log("⏳ وكيل التنسيق المركزي...")
         if agent_cb:
             agent_cb("chief", "running")
-        chief_input = f"التقارير:\n{text}\n\nنتائج الوكلاء:\n{json.dumps(results, ensure_ascii=False)}"
+        clean = {k: v for k, v in results.items() if "error" not in v}
+        chief_input = (
+            f"التقارير:\n{text}\n\n"
+            f"نتائج الوكلاء:\n{json.dumps(clean, ensure_ascii=False)}"
+        )
         desc, schema = AGENT_PROMPTS["chief"]
         system = (
             f"{desc}\n"
             f"أجب بـ JSON فقط بهذا الهيكل:\n{schema}"
         )
-        results["chief"] = self.ai.ask(system, chief_input)
+        chief = self.ai.ask(system, chief_input)
+        chief_ok = "error" not in chief and "raw" not in chief
+        results["chief"] = _ensure_chief_schema(chief)
         if agent_cb:
-            agent_cb("chief", "error" if "error" in results["chief"] else "done")
+            agent_cb("chief", "done" if chief_ok else "error")
         if progress_cb:
             progress_cb(100)
         self.log("✓ اكتمل التحليل الشامل")

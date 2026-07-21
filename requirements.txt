@@ -7,3 +7,4 @@ PySide6>=6.8        # Qt Quick / QML UI runtime
 reportlab>=4.0      # PDF export
 openpyxl>=3.1       # Excel export + reading ERP .xlsx inputs
 PyPDF2>=3.0         # extract text from PDF email/ERP attachments (optional at runtime)
+python-docx>=1.1    # read Word .docx field reports (upload + ERP folder)

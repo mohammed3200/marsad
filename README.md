@@ -4,10 +4,10 @@
 
 **LTT 4G/5G Project-Management Intelligence — Arabic (RTL) desktop app**
 
-Ingests field reports from email · WhatsApp · ERP, runs them through a fleet of LLM agents,
-and produces an executive status brief plus branded PDF / Excel / HTML reports.
+Ingests field reports from email · WhatsApp · ERP · uploaded files, runs them through a fleet of
+LLM agents, and produces an executive status brief plus branded PDF / Excel / HTML reports.
 
-Qt Quick / QML · PySide6 · Ollama or Claude
+Qt Quick / QML · PySide6 · Ollama · Claude · OpenAI · Gemini · Azure
 
 </div>
 
@@ -23,9 +23,25 @@ Qt Quick / QML · PySide6 · Ollama or Claude
 | **التقارير — Reports** | **الإعدادات — Settings** |
 | ![Reports](docs/screenshots/3-reports.png) | ![Settings](docs/screenshots/4-settings.png) |
 
-The interface reads as a light executive brief: white paper, near-black ink, one deep teal-green
-accent, a right-hand RTL sidebar, and colour rationed to a single status dot per metric. Arabic is
-shaped and ordered correctly by Qt (HarfBuzz + BiDi).
+An Arabic-forward executive brief: white paper, near-black ink, one deep teal-green accent, and a
+right-hand RTL sidebar with a Kufi wordmark and a dual **Hijri · Gregorian** date. Colour is rationed to
+a single status dot per metric, and structure comes from hairline rules — not cards. Arabic is shaped
+and ordered correctly by Qt (HarfBuzz + BiDi); the dashboard opens with a three-step quick-start until
+the first analysis runs.
+
+## Latest update
+
+- **Five AI providers** — Ollama, Claude, OpenAI (+ any OpenAI-compatible endpoint: OpenRouter, Groq,
+  Together, DeepSeek, LM Studio), Google Gemini, and Azure OpenAI. Settings shows only the selected
+  provider's fields; a configurable request timeout and a per-provider connection test are built in.
+- **File upload from the app** — a native picker adds `xlsx · xls · csv · pdf · txt · json · docx`
+  reports directly; Word support added.
+- **All sources configured in the UI** — email (IMAP/SMTP), ERP folder, and a real WhatsApp receiver are
+  set up from the Settings tab, no manual `settings.json` editing.
+- **Arabic-forward redesign** — Kufi wordmark, glyph navigation, dual Hijri · Gregorian dates, and a
+  first-run quick-start on the dashboard.
+- **Robust analysis** — the `chief` output schema is guaranteed, so the dashboard and exporters never
+  break even when a model call fails.
 
 ## How it works
 
@@ -35,11 +51,15 @@ flowchart RL
         E["البريد الإلكتروني<br/>Email · IMAP"]
         W["واتساب<br/>WhatsApp"]
         R["ERP<br/>ملفات Excel/CSV/PDF"]
+        U["رفع ملفات<br/>Word/Excel/PDF/CSV"]
+        M["إدخال يدوي<br/>Manual"]
     end
 
     E --> HUB
     W --> HUB
     R --> HUB
+    U --> HUB
+    M --> HUB
     HUB["ConnectorHub<br/>collect_all()"] --> ENG
 
     subgraph Engine["AgentsEngine"]
@@ -47,7 +67,7 @@ flowchart RL
         WORK["١٠ وكلاء متخصّصين<br/>ops · quality · safety · civil ·<br/>cost · contract · procure ·<br/>supply · risk · schedule"] --> CHIEF["وكيل التنسيق<br/>chief"]
     end
 
-    ENG["AIEngine<br/>Ollama / Claude"] --> Engine
+    ENG["AIEngine<br/>Ollama · Claude · OpenAI · Gemini · Azure"] --> Engine
     CHIEF --> RESULTS["results dict<br/>reports/latest.json"]
 
     RESULTS --> DASH["لوحة التحكم<br/>QML Dashboard"]
@@ -62,7 +82,8 @@ output into `overall_health`, `executive_summary`, `kpis`, and `top_actions`.
 
 ## Install & run
 
-Needs **Python 3.10+** and a running LLM backend (Ollama or Claude).
+Needs **Python 3.10+** and one AI backend — a local Ollama model, or an API key for Claude, OpenAI (or
+any OpenAI-compatible endpoint), Gemini, or Azure OpenAI.
 
 ### Source (Windows · macOS · Linux)
 
@@ -97,23 +118,31 @@ An installed app keeps its config, reports, and contacts under a per-user data d
 
 ## Connect a backend
 
-Edit `settings.json`:
+Everything is configured from the **الإعدادات** (Settings) tab in the app — **no manual JSON editing**.
+Pick the provider from the **المزوّد** dropdown; the tab shows only that provider's fields.
 
-**Ollama (local, default)** — install [Ollama](https://ollama.com), pull a model, then:
-```json
-{ "ai_backend": "ollama", "ollama_url": "http://localhost:11434", "ollama_model": "llama3.2" }
-```
-```bash
-ollama pull llama3.2      # or any instruct model that returns JSON
-```
+| Provider | Notes |
+|---|---|
+| **Ollama** (local, default) | `ollama pull llama3.2`; set the URL/model. Runs offline. |
+| **Claude API** | Paste your key (`claude-opus-4-5` by default). |
+| **OpenAI / compatible** | One adapter with an editable **Base URL** + preset picker — OpenAI, OpenRouter, Groq, Together, DeepSeek, LM Studio, or a custom endpoint. |
+| **Google Gemini** | Paste your key (`gemini-2.0-flash` by default). |
+| **Azure OpenAI** | Endpoint + deployment + key + api-version. |
 
-**Claude API**
-```json
-{ "ai_backend": "claude", "claude_api_key": "sk-ant-…", "claude_model": "claude-opus-4-5" }
-```
+**Response timeout** — `مهلة الاستجابة` (default 180s); raise it for large/slow local models. «اختبار المحرّك»
+tests whichever provider is selected.
 
-Test the connection from the **الإعدادات** (Settings) tab. Analysis speed depends on the model and
-hardware — large local models may need a longer timeout.
+### Data sources (all UI-configured)
+
+| Source | How to enable |
+|---|---|
+| **Manual entry** | Type/paste a report on the **إدخال البيانات** tab. |
+| **File upload** | «رفع ملفات» — pick `xlsx · xls · csv · pdf · txt · json · docx`. |
+| **Email (IMAP/SMTP)** | Fill the **البريد الإلكتروني** section (user, password, hosts, port, recipients), press «اختبار البريد», then «جمع من المصادر» pulls new mail. |
+| **ERP folder** | Point the **مجلد ERP** picker at a shared folder; any dropped file is read on «جمع من المصادر». |
+| **WhatsApp** | Enable it in Settings, «توليد ملف الجسر», then run the generated `whatsapp_bridge.js` once (`npm install && node whatsapp_bridge.js`, scan the QR). Group messages then flow in. |
+
+«اختبار المحرّك» tests the AI engine; «اختبار البريد» tests email — independently.
 
 ## Data & privacy
 
@@ -126,7 +155,7 @@ entered in the app sync their email/WhatsApp → department routing back into `s
 
 ```
 app.py                 Qt entry — loads qml/Main.qml
-core/                  UI-agnostic logic (engine, contacts, exporters)
+core/                  UI-agnostic logic (engine, contacts, exporters, hijri dates)
 connectors.py          email / ERP / WhatsApp ingestion + outbound email
 backend/               Qt bridge — theme, controller, worker, models, settings
 qml/                   Light-report UI — Main + 6 pages + flat primitives

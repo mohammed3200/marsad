@@ -9,7 +9,8 @@ connectors, exporters, contacts). Run:  python app.py
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QGuiApplication, QFontDatabase
+from PySide6.QtGui import QFontDatabase
+from PySide6.QtWidgets import QApplication
 from PySide6.QtQuick import QQuickView
 from PySide6.QtCore import Qt, QUrl
 
@@ -30,7 +31,7 @@ def load_fonts():
 
 
 def main():
-    app = QGuiApplication(sys.argv)
+    app = QApplication(sys.argv)
     app.setApplicationName("مرصد")
     app.setOrganizationName("LTT")
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)

@@ -11,13 +11,37 @@ SETTINGS_F  = DATA_DIR / "settings.json"       # writable per-user config
 EXAMPLE_F   = BUNDLE_DIR / "settings.example.json"  # shipped template / seed
 
 _DEFAULTS = {
-    "ai_backend":      "ollama",
-    "ollama_url":      "http://localhost:11434",
-    "ollama_model":    "llama3.2",
-    "claude_api_key":  "",
-    "claude_model":    "claude-opus-4-5",
-    "email_dept_map":  {},
-    "whatsapp_groups": {},
+    "ai_backend":       "ollama",
+    "ollama_url":       "http://localhost:11434",
+    "ollama_model":     "llama3.2",
+    "claude_api_key":   "",
+    "claude_model":     "claude-opus-4-5",
+    # OpenAI + OpenAI-compatible (OpenRouter / Groq / Together / DeepSeek / LM Studio)
+    "openai_api_key":   "",
+    "openai_base_url":  "https://api.openai.com/v1",
+    "openai_model":     "gpt-4o-mini",
+    # Google Gemini
+    "gemini_api_key":   "",
+    "gemini_model":     "gemini-2.0-flash",
+    # Azure OpenAI
+    "azure_endpoint":    "",
+    "azure_api_key":     "",
+    "azure_deployment":  "",
+    "azure_api_version": "2024-06-01",
+    "ai_timeout":       180,
+    # email / ERP connector config (settable from the Settings UI)
+    "email_user":       "",
+    "email_password":   "",
+    "imap_host":        "imap.gmail.com",
+    "smtp_host":        "smtp.gmail.com",
+    "smtp_port":        587,
+    "report_recipients": [],
+    "erp_folder":       "",
+    # whatsapp bridge
+    "whatsapp_enabled": False,
+    "whatsapp_port":    5051,
+    "email_dept_map":   {},
+    "whatsapp_groups":  {},
 }
 
 
