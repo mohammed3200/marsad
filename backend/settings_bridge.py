@@ -40,6 +40,7 @@ _DEFAULTS = {
     # whatsapp bridge
     "whatsapp_enabled": False,
     "whatsapp_port":    5051,
+    "whatsapp_token":   "",
     "email_dept_map":   {},
     "whatsapp_groups":  {},
 }

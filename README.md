@@ -171,6 +171,17 @@ config and output and never ship. `settings.example.json` (blank credentials) is
 entered in the app sync their email/WhatsApp → department routing back into `settings.json` via the
 **مزامنة مع الإعدادات** button.
 
+- **Uploaded files** are read in place from wherever you picked them — no copies are made or kept.
+  (`uploads/` exists as an empty, gitignored scratch directory; nothing is written to it.)
+- **WhatsApp session** — «توليد ملف الجسر» writes `whatsapp_bridge.js` (with the per-session
+  `X-WA-Token`, also stored as `whatsapp_token` in `settings.json`), and running it creates
+  `wa_session/` holding your live WhatsApp login. Both live under the per-user data dir
+  (`%APPDATA%/marsad`, `~/.local/share/marsad`; the repo folder when run from source), are
+  gitignored, and stay until you delete them — delete both to revoke the linked device.
+- **Reports & logs** — analysis results (`reports/`) and connector/engine logs (`logs/`) accumulate
+  locally until you delete them; nothing leaves the machine except calls to your configured LLM
+  provider and email server.
+
 ## Project layout
 
 ```

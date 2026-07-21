@@ -43,6 +43,7 @@ class AppController(QObject):
     navRequested      = Signal(int)          # page index to switch to
     settingsChanged   = Signal()
     _collected        = Signal("QVariant")   # reports gathered off the GUI thread
+    _filesAdded       = Signal("QVariant")   # files parsed off the GUI thread
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,9 +62,11 @@ class AppController(QObject):
         self._testing_engine = False
         self._testing_email  = False
         self._collecting = False
+        self._adding     = False
         self._thread   = None
         self._worker   = None
         self._collected.connect(self._on_collected)
+        self._filesAdded.connect(self._on_files_added)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._load_latest()
         self._start_whatsapp_if_enabled()
@@ -189,27 +192,48 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def addFiles(self, urls):
-        """قراءة ملفات مختارة (Word/Excel/PDF/CSV/TXT/JSON) وإضافتها كتقارير."""
-        added, failed = 0, []
+        """قراءة ملفات مختارة على خيط منفصل (حتى لا تتجمّد الواجهة) ثم إضافتها."""
+        if self._adding:
+            return
+        paths = []
         for u in (urls or []):
             p = self._localfile(str(u))
-            if not p:
-                continue
+            if p:
+                paths.append(p)
+        if not paths:
+            self.notify.emit("لم تُختَر ملفات")
+            return
+        self._adding = True
+        threading.Thread(target=self._run_add_files, args=(paths,),
+                         daemon=True).start()
+
+    def _run_add_files(self, paths):
+        """تفكيك الملفات (Word/Excel/PDF/CSV/TXT/JSON) خارج خيط الواجهة."""
+        added, failed = [], []
+        for p in paths:
             try:
                 rep = read_file_to_report(p, source="ملف")
                 if rep:
-                    self._reports.add(rep)
-                    added += 1
+                    added.append(rep)
                 else:
                     failed.append(Path(p).name)
             except Exception:
                 failed.append(Path(p).name)
+        self._filesAdded.emit({"added": added, "failed": failed})
+
+    @Slot("QVariant")
+    def _on_files_added(self, res):
+        self._adding = False
+        added  = list(res.get("added", []))
+        failed = list(res.get("failed", []))
+        for rep in added:
+            self._reports.add(rep)
         if added:
             self.reportsChanged.emit()
         if added and failed:
-            self.notify.emit(f"أُضيف {added} ملف — تعذّر: {'، '.join(failed)}")
+            self.notify.emit(f"أُضيف {len(added)} ملف — تعذّر: {'، '.join(failed)}")
         elif added:
-            self.notify.emit(f"أُضيف {added} ملف")
+            self.notify.emit(f"أُضيف {len(added)} ملف")
         elif failed:
             self.notify.emit(f"تعذّرت قراءة: {'، '.join(failed)}")
         else:
@@ -422,6 +446,8 @@ class AppController(QObject):
         self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
         save_settings(self._settings)
         self.settingsChanged.emit()
+        # أعد بناء المحور حتى تسري خرائط التوجيه الجديدة على الموصّلات فوراً
+        self._rebuild_hub()
         self.notify.emit("تمت مزامنة جهات الاتصال مع الإعدادات")
 
     # ───────────────────────── whatsapp ─────────────────────────

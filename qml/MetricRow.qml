@@ -2,14 +2,18 @@ import QtQuick
 import QtQuick.Layouts
 
 // One line of the metrics table: Arabic label, solid hairline leader, mono value in ink.
-// A small status dot appears only when the metric is off-track (theme colour is not green).
+// A small status dot appears only when the metric is off-track (amber/red).
 // Value is NOT coloured — colour is rationed to the dot alone.
 RowLayout {
     id: row
     property string label: ""
     property string value: "—"
     property string status: ""
-    readonly property bool offTrack: status !== "" && Theme.statusColor(status) !== Theme.colors.green
+    readonly property bool offTrack: {
+        if (status === "") return false
+        var c = Theme.statusColor(status)
+        return c === Theme.colors.amber || c === Theme.colors.red
+    }
     Layout.fillWidth: true
     spacing: 10
 

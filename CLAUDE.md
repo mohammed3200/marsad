@@ -50,7 +50,7 @@ every layer. Changing an agent's output schema means updating its consumers (`co
 - `contacts.py` — `ContactsDB` (JSON org chart in `data/contacts.json`) + `export_to_config()`
   (email→dept / whatsapp→dept maps the connectors route on).
 - `hijri.py` — self-contained Gregorian→Hijri conversion (no dependency); `dual_label()` →
-  «١٤ محرّم ١٤٤٨ هـ · 2026-07-21» (Arabic-Indic numerals + Arabic month names). Exposed as
+  «٥ صفر ١٤٤٨ هـ · 2026-07-21» (Arabic-Indic numerals + Arabic month names). Exposed as
   `app.todayLabel`.
 - `exporters.py` — `export_pdf(results, path)` + `export_excel(results, path)` (reportlab/openpyxl, RTL).
 
@@ -87,7 +87,7 @@ Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string
 - `models.py` — `AgentsModel` (11 agents + live state) and `ReportsModel` (`QAbstractListModel`s).
 - `settings_bridge.py` — load/save `settings.json`.
 
-**`app.py`** — entry point: `QGuiApplication` (RTL) → load bundled fonts → set `Theme` + `app` context
+**`app.py`** — entry point: `QApplication` (RTL) → load bundled fonts → set `Theme` + `app` context
 properties → `QQuickView` loads `qml/Main.qml`.
 
 **`qml/`** — flat directory (files auto-import each other by filename). `Main.qml` (sidebar shell +
@@ -98,8 +98,9 @@ markers; the bundled fonts contain no symbol glyphs, so never use Unicode symbol
 
 ## Configuration & data
 
-- `settings.json` — backend + Ollama/Claude config + `email_dept_map` / `whatsapp_groups`. **Gitignored**
-  (holds real addresses); `settings.example.json` ships as the template.
+- `settings.json` — backend keys for all five providers (ollama / claude / openai-compatible /
+  gemini / azure; see the Running section) + `email_dept_map` / `whatsapp_groups` / `whatsapp_token`.
+  **Gitignored** (holds real addresses); `settings.example.json` ships as the template.
 - `data/contacts.json` — org structure + employees (authoritative; gitignored).
 - `reports/latest.json` — most recent analysis, loaded on startup to repopulate the dashboard.
 - `sample_reports.json` — demo input loaded via "تحميل نماذج".

@@ -37,7 +37,7 @@ def gregorian_to_hijri(y: int, m: int, d: int) -> tuple:
 
 
 def hijri_label(date: datetime.date = None) -> str:
-    """«١٤ محرّم ١٤٤٨ هـ» للتاريخ المُعطى (أو اليوم)."""
+    """«٥ صفر ١٤٤٨ هـ» للتاريخ المُعطى (أو اليوم)."""
     date = date or datetime.date.today()
     iy, im, idd = gregorian_to_hijri(date.year, date.month, date.day)
     month = _AR_MONTHS[max(0, min(11, im - 1))]
@@ -45,6 +45,6 @@ def hijri_label(date: datetime.date = None) -> str:
 
 
 def dual_label(date: datetime.date = None) -> str:
-    """«١٤ محرّم ١٤٤٨ هـ · 2026-07-21» — هجري + ميلادي."""
+    """«٥ صفر ١٤٤٨ هـ · 2026-07-21» — هجري + ميلادي."""
     date = date or datetime.date.today()
     return f"{hijri_label(date)} · {date.isoformat()}"

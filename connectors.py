@@ -619,10 +619,13 @@ class ERPConnector:
         return reports
 
     def _read_file(self, fpath: Path) -> dict | None:
-        # خريطة الأقسام المُعدّة أولاً، ثم التخمين من اسم الملف
+        # خريطة الأقسام المُعدّة أولاً — مفاتيحها عناوين بريد، لذا نطابق
+        # الجزء المحلي (قبل @) ككلمة مستقلة مع اسم الملف — ثم التخمين
+        import re
         fname = fpath.name.lower()
         for key, dept in self.dept_map.items():
-            if key.lower() in fname:
+            kw = key.lower().split("@", 1)[0].strip()
+            if kw and re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", fname):
                 return read_file_to_report(fpath, source="erp", dept=dept,
                                            from_label=f"ERP: {fpath.name}")
         return read_file_to_report(fpath, source="erp",
@@ -666,7 +669,10 @@ class ConnectorHub:
         self._lock    = threading.Lock()
         self._log_fn  = print
         self.whatsapp = None
-        self.wa_token = secrets.token_hex(16)
+        # الرمز يُحفظ في الإعدادات حتى يبقى ثابتاً عند إعادة بناء المحور —
+        # وإلا توقف ملف الجسر المولَّد سابقاً عن العمل (403)
+        self.wa_token = settings.get("whatsapp_token") or secrets.token_hex(16)
+        settings["whatsapp_token"] = self.wa_token
 
     def set_logger(self, fn):
         self._log_fn = fn
