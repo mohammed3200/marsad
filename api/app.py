@@ -3,7 +3,20 @@
 Local-only: binds 127.0.0.1 (see api/__main__.py). All blocking service calls
 run in FastAPI's threadpool (sync `def` endpoints); long-running operations
 start daemon threads inside AppService and report back over the WebSocket.
+
+Not shipped in this release (see "Release scope: desktop only" in
+docs/superpowers/plans/2026-07-28-launch-readiness.md): this module refuses
+to import unless MARSAD_API_ENABLE=1 is set. There is no authentication
+layer — do not expose this beyond loopback.
 """
+import os
+
+if os.environ.get("MARSAD_API_ENABLE") != "1":
+    raise RuntimeError(
+        "الواجهة البرمجية غير مفعّلة في هذا الإصدار — "
+        "شغّلها بـ MARSAD_API_ENABLE=1 على مسؤوليتك (تجريبية، بلا مصادقة)."
+    )
+
 import asyncio
 import datetime
 import json
@@ -19,6 +32,13 @@ from .services import AppService
 
 service = AppService()
 app = FastAPI(title="marsad API", docs_url="/api/docs")
+
+# Settings keys never sent to an HTTP client — GET redacts them to "" and
+# reports only whether each is set; PUT treats a blank value as "unchanged".
+# api_token is not introduced in this release (no auth layer ships), so it is
+# not part of this tuple.
+SECRET_KEYS = ("claude_api_key", "openai_api_key", "gemini_api_key",
+               "azure_api_key", "email_password", "whatsapp_token")
 
 
 # ───────────────────────── websocket ─────────────────────────
@@ -96,11 +116,22 @@ def get_meta():
 
 @app.get("/api/settings")
 def get_settings():
-    return service.settings
+    """Secrets are never sent to the client — only whether each one is set."""
+    raw = service.settings
+    safe = {k: v for k, v in raw.items() if k not in SECRET_KEYS}
+    for key in SECRET_KEYS:
+        safe[key] = ""
+    safe["secrets_set"] = {k: bool(raw.get(k)) for k in SECRET_KEYS}
+    return safe
 
 
 @app.put("/api/settings")
 def put_settings(values: dict):
+    """A blank secret means 'unchanged' — the client never had the real value."""
+    values = {k: v for k, v in values.items() if k != "secrets_set"}
+    for key in SECRET_KEYS:
+        if key in values and values[key] == "":
+            values.pop(key)
     service.save_settings(values)
     return {"ok": True}
 

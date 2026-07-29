@@ -468,11 +468,17 @@ class AppService:
 
     # ───────────────────────── settings / connection ─────────────────────────
     def save_settings(self, values):
-        """Merge + persist settings, rebuild the hub so they take effect at once."""
+        """Merge + persist settings, rebuild the hub so they take effect at once.
+
+        Persists only the keys the caller actually sent (`changed_keys`) —
+        e.g. a PUT that had blank secrets stripped from it — so the write
+        never clobbers a key the caller never touched.
+        """
         if values:
             self._settings.update(dict(values))
         try:
-            save_settings(self._settings)
+            save_settings(self._settings,
+                          changed_keys=set(values.keys()) if values else None)
         except Exception as e:
             self._emit("notify", message=f"تعذّر حفظ الإعدادات: {e}")
             return

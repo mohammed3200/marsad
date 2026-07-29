@@ -9,6 +9,7 @@ Run from the repo root:
 The tests exercise the input queue, samples, dashboard, contacts, and settings
 endpoints. They rely on the singleton AppService in api/app.py.
 """
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -16,6 +17,10 @@ from pathlib import Path
 # Ensure repo root is on path when running as a script.
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# The web API does not ship in this release — importing api.app refuses
+# unless this is set. This tool is an explicit, opt-in dev check.
+os.environ["MARSAD_API_ENABLE"] = "1"
 
 from fastapi.testclient import TestClient
 
