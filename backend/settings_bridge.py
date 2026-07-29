@@ -4,6 +4,8 @@ Keys: ai_backend, ollama_url, ollama_model, claude_api_key, claude_model,
 email_dept_map, whatsapp_groups (+ optional email/erp connector config).
 """
 import json
+import os
+import tempfile
 
 from core.paths import DATA_DIR, BUNDLE_DIR
 
@@ -63,6 +65,32 @@ def load_settings() -> dict:
     return dict(_DEFAULTS)
 
 
-def save_settings(settings: dict) -> None:
-    with open(SETTINGS_F, "w", encoding="utf-8") as f:
-        json.dump(settings, f, ensure_ascii=False, indent=2)
+def save_settings(settings: dict, changed_keys=None) -> None:
+    """Persist settings atomically with owner-only permissions.
+
+    `changed_keys` limits the write to those keys, re-reading whatever is on
+    disk first — so a second process editing a different key is not clobbered.
+    """
+    if changed_keys:
+        merged = load_settings()
+        for key in changed_keys:
+            if key in settings:
+                merged[key] = settings[key]
+        settings = merged
+
+    SETTINGS_F.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(SETTINGS_F.parent),
+                               prefix=".settings-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, SETTINGS_F)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

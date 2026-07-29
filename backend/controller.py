@@ -513,13 +513,15 @@ class AppController(QObject):
     @Slot("QVariant")
     def saveSettings(self, values):
         values = self._to_py(values)
+        merged = dict(self._settings)
         if values:
-            self._settings.update(dict(values))
+            merged.update(dict(values))
         try:
-            save_settings(self._settings)
+            save_settings(merged, changed_keys=set(values.keys()) if values else None)
         except Exception as e:
             self.notify.emit(f"تعذّر حفظ الإعدادات: {e}")
             return
+        self._settings = merged
         self._ai.settings = self._settings
         # الموصّلات تلتقط الإعدادات عند الإنشاء — أعد بناء الـ hub حتى تسري
         # بيانات البريد / مجلد ERP / واتساب الجديدة فوراً.
