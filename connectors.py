@@ -21,6 +21,7 @@ import threading
 import time
 import logging
 import secrets
+import ssl
 from email.header     import decode_header
 from email.mime.text  import MIMEText
 from email.mime.multipart   import MIMEMultipart
@@ -46,6 +47,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# TLS for every outbound mail connection. Without an explicit context both
+# imaplib and smtplib fall back to ssl._create_stdlib_context(), which is
+# CERT_NONE with check_hostname disabled — i.e. no verification at all.
+SSL_CONTEXT = ssl.create_default_context()
 
 # ════════════════════════════════════════════════════
 # 1. موصّل البريد الإلكتروني
@@ -73,7 +78,7 @@ class EmailConnector:
         if not self.user or not self.password:
             return False, "لم تُدخَل بيانات البريد في الإعدادات"
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=10)
+            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=10, ssl_context=SSL_CONTEXT)
             mail.login(self.user, self.password)
             mail.logout()
             return True, f"✓ الاتصال بـ {self.user} ناجح"
@@ -90,7 +95,7 @@ class EmailConnector:
             return []
         reports = []
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_host)
+            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=20, ssl_context=SSL_CONTEXT)
             mail.login(self.user, self.password)
             mail.select("INBOX")
             _, ids = mail.search(None, "UNSEEN")
@@ -146,8 +151,8 @@ class EmailConnector:
                     part.add_header("Content-Disposition", "attachment",
                                     filename=os.path.basename(path))
                     msg.attach(part)
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as srv:
-                srv.starttls()
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=20) as srv:
+                srv.starttls(context=SSL_CONTEXT)
                 srv.login(self.user, self.password)
                 srv.sendmail(self.user, recipients, msg.as_bytes())
             log.info(f"أُرسل التقرير إلى: {recipients}")
