@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.paths import BUNDLE_DIR, DATA_DIR
 
-from .services import AppService
+from .services import AppService, ENGINE_KEYS
 
 service = AppService()
 app = FastAPI(title="marsad API", docs_url="/api/docs")
@@ -39,6 +39,42 @@ app = FastAPI(title="marsad API", docs_url="/api/docs")
 # not part of this tuple.
 SECRET_KEYS = ("claude_api_key", "openai_api_key", "gemini_api_key",
                "azure_api_key", "email_password", "whatsapp_token")
+
+# The subset of SECRET_KEYS that also gets copied verbatim into every saved
+# engine profile (ENGINE_KEYS, api/services.py) — "save current engine config
+# as a named profile" snapshots these into settings["engine_profiles"][i], so
+# each profile needs the exact same redact-on-GET / blank-means-unchanged-on-
+# PUT treatment as the top-level settings, or a saved profile's real provider
+# keys leak straight through GET /api/settings one level down.
+PROFILE_SECRET_KEYS = tuple(k for k in SECRET_KEYS if k in ENGINE_KEYS)
+
+
+def _redact_profile(profile: dict) -> dict:
+    """Blank a saved engine profile's secret fields; report which were set."""
+    safe = dict(profile)
+    secrets_set = {k: bool(safe.get(k)) for k in PROFILE_SECRET_KEYS}
+    for key in PROFILE_SECRET_KEYS:
+        if key in safe:
+            safe[key] = ""
+    safe["secrets_set"] = secrets_set
+    return safe
+
+
+def _restore_profile_secrets(new_profiles: list, old_profiles: list) -> list:
+    """Blank secret fields in an incoming PUT mean 'unchanged' — fill them
+    back in from the matching stored profile (matched by name), the same
+    rule the top-level settings already follow."""
+    old_by_name = {p.get("name"): p for p in old_profiles}
+    merged = []
+    for profile in new_profiles:
+        profile = dict(profile)
+        profile.pop("secrets_set", None)
+        prior = old_by_name.get(profile.get("name"), {})
+        for key in PROFILE_SECRET_KEYS:
+            if key in profile and profile[key] == "":
+                profile[key] = prior.get(key, "")
+        merged.append(profile)
+    return merged
 
 
 # ───────────────────────── websocket ─────────────────────────
@@ -122,6 +158,8 @@ def get_settings():
     for key in SECRET_KEYS:
         safe[key] = ""
     safe["secrets_set"] = {k: bool(raw.get(k)) for k in SECRET_KEYS}
+    safe["engine_profiles"] = [_redact_profile(p)
+                               for p in raw.get("engine_profiles", [])]
     return safe
 
 
@@ -132,7 +170,11 @@ def put_settings(values: dict):
     for key in SECRET_KEYS:
         if key in values and values[key] == "":
             values.pop(key)
-    service.save_settings(values)
+    if "engine_profiles" in values:
+        values["engine_profiles"] = _restore_profile_secrets(
+            values["engine_profiles"], service.settings.get("engine_profiles", []))
+    if values:  # a PUT of only blanked secrets is a no-op, not a full rewrite
+        service.save_settings(values)
     return {"ok": True}
 
 

@@ -11,8 +11,15 @@ from pathlib import Path
 def isolated_state():
     import backend.settings_bridge as sb
     import core.engine as eng
+    import core.contacts as contacts
+    # Qt-free (api/services.py mirrors backend/controller.py without PySide6),
+    # so — unlike backend.controller below — it's safe to import unconditionally.
+    # It must be imported *before* api.app's module-level `service = AppService()`
+    # runs, or the patch below would have nothing to redirect.
+    import api.services as svc
 
-    saved = (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS)
+    saved = (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS, contacts.CONTACTS_FILE,
+             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F)
 
     # Also redirect backend.controller path globals if it's already imported
     ctrl = sys.modules.get("backend.controller")
@@ -26,6 +33,10 @@ def isolated_state():
         sb.SETTINGS_F = root / "settings.json"
         sb.EXAMPLE_F = root / "settings.example.json"   # deliberately absent
         eng.REPORTS = root / "reports"
+        contacts.CONTACTS_FILE = root / "data" / "contacts.json"
+        svc.REPORTS = root / "reports"
+        svc.SAMPLES_F = root / "sample_reports.json"     # deliberately absent
+        svc.LATEST_F = root / "reports" / "latest.json"
 
         if ctrl:
             ctrl.REPORTS = root / "reports"
@@ -35,6 +46,7 @@ def isolated_state():
         try:
             yield root
         finally:
-            sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS = saved
+            (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS, contacts.CONTACTS_FILE,
+             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F) = saved
             if ctrl_saved:
                 ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F = ctrl_saved
