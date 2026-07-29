@@ -13,7 +13,6 @@ ICON = "assets/marsad.ico"
 datas = [
     ("settings.example.json", "."),
     ("sample_reports.json", "."),
-    ("web/dist", "web/dist"),  # built web UI — run `cd web && npm run build` first
 ]
 binaries = []
 hiddenimports = []

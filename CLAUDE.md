@@ -8,8 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 construction/telecom project management (LTT 4G/5G rollout). It ingests field reports from multiple
 sources, runs them through a fleet of LLM "agents," and produces an executive dashboard plus branded
 PDF/Excel/HTML reports. UI text, agent prompts, and output JSON keys/values are all in Arabic —
-**preserve Arabic strings verbatim when editing**. Qt shapes/orders Arabic natively (HarfBuzz + BiDi),
-so no reshaper/bidi libraries are used.
+**preserve Arabic strings verbatim when editing**. Qt shapes/orders Arabic natively (HarfBuzz + BiDi) for the on-screen UI, so the
+QML layer needs no reshaper. The **PDF exporter does**: reportlab shapes
+nothing on its own, so `core/exporters.py` uses `arabic-reshaper` +
+`python-bidi`. Both are required dependencies — do not remove them.
 
 Design language: **Light Executive Report** — white paper, near-black ink, one deep teal-green accent
 (`#0E6E60`), no cards, structure by hairline rules, right-hand RTL sidebar nav. Colour is rationed:
