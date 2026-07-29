@@ -152,21 +152,65 @@ class AIEngine:
             return 180
 
     @staticmethod
+    def _first_json_object(text: str):
+        """First balanced {...} span, ignoring braces inside string literals."""
+        depth = 0
+        start = -1
+        in_str = False
+        escaped = False
+        for i, ch in enumerate(text):
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}" and depth:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    return text[start:i + 1]
+        return None
+
+    @staticmethod
     def _parse_json(raw: str) -> dict:
         """استخراج JSON من رد النموذج — يزيل أسوار ```json ثم يجرّب استخراج {}.
-        يُعيد {"raw":…, "error":"json_parse"} إذا تعذّر."""
+
+        يجب أن تكون النتيجة قاموساً؛ أي رد آخر (قائمة أو قيمة مفردة) يُعامَل
+        كخطأ تحليل حتى لا ينهار المُصدِّر أو خط التحليل لاحقاً.
+        يُعيد {"raw":…, "error":"json_parse"} إذا تعذّر.
+        """
         clean = raw.replace("```json", "").replace("```", "").strip()
+
+        # First try to parse the clean text as-is
         try:
-            return json.loads(clean)
-        except json.JSONDecodeError:
-            start = clean.find("{")
-            end   = clean.rfind("}") + 1
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(clean[start:end])
-                except json.JSONDecodeError:
-                    pass
+            parsed = json.loads(clean)
+            if isinstance(parsed, dict):
+                return parsed
+            # If it parses but isn't a dict, it's an error
+            # (don't silently extract from arrays/scalars)
             return {"raw": raw, "error": "json_parse"}
+        except json.JSONDecodeError:
+            pass
+
+        # Only if full parse failed, try to extract the first object
+        candidate = AIEngine._first_json_object(clean)
+        if candidate:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        return {"raw": raw, "error": "json_parse"}
 
     def _ask_ollama(self, system_prompt: str, user_text: str) -> dict:
         import urllib.request, urllib.error
@@ -297,10 +341,10 @@ class AIEngine:
 
     def test_connection(self) -> tuple:
         """اختبار الاتصال بالمحرّك المُختار (يعمل لكل المزوّدين عبر ask())."""
-        result = self.ask(
+        result = _as_result(self.ask(
             "أجب بـ JSON فقط.",
             'أجب بالتالي حرفياً: {"status":"ok","message":"الاتصال ناجح"}'
-        )
+        ))
         if "error" in result:
             return False, result["error"]
         return True, result.get("message", "الاتصال ناجح")
@@ -378,6 +422,13 @@ def _ensure_chief_schema(chief: dict) -> dict:
     }
 
 
+def _as_result(value) -> dict:
+    """Any agent result that is not a dict is a failed agent, not a crash."""
+    if isinstance(value, dict):
+        return value
+    return {"raw": repr(value), "error": "bad_shape"}
+
+
 class AgentsEngine:
     def __init__(self, ai: AIEngine, log_fn=None):
         self.ai  = ai
@@ -406,7 +457,7 @@ class AgentsEngine:
             self.log(f"⏳ {ag_id}...")
             if agent_cb:
                 agent_cb(ag_id, "running")
-            result = self.run_agent(ag_id, text)
+            result = _as_result(self.run_agent(ag_id, text))
             results[ag_id] = result
             if "error" in result:
                 self.log(f"  ✗ {result['error']}")
@@ -433,7 +484,7 @@ class AgentsEngine:
             f"{desc}\n"
             f"أجب بـ JSON فقط بهذا الهيكل:\n{schema}"
         )
-        chief = self.ai.ask(system, chief_input)
+        chief = _as_result(self.ai.ask(system, chief_input))
         chief_ok = "error" not in chief and "raw" not in chief
         results["chief"] = _ensure_chief_schema(chief)
         if agent_cb:
