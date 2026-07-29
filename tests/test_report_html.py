@@ -17,17 +17,22 @@ class ReportHtmlEscapingTests(unittest.TestCase):
         html = build_report_html(_results(executive_summary=EVIL))
         self.assertNotIn('onerror="', html)
         self.assertNotIn('href="https://evil.example"', html)
+        self.assertNotIn("<img", html)
         self.assertIn("&lt;img", html)
 
     def test_action_fields_are_escaped(self):
         html = build_report_html(_results(top_actions=[
             {"priority": 1, "action": EVIL, "owner": EVIL, "deadline": EVIL}]))
         self.assertNotIn('onerror="', html)
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img", html)
 
     def test_kpi_fields_are_escaped(self):
         html = build_report_html(_results(kpis=[
             {"name": EVIL, "value": EVIL, "trend": EVIL, "status": "جيد"}]))
         self.assertNotIn('onerror="', html)
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img", html)
 
     def test_ordinary_arabic_is_untouched(self):
         html = build_report_html(_results(
