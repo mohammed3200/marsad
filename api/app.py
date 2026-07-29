@@ -49,6 +49,19 @@ SECRET_KEYS = ("claude_api_key", "openai_api_key", "gemini_api_key",
 PROFILE_SECRET_KEYS = tuple(k for k in SECRET_KEYS if k in ENGINE_KEYS)
 
 
+def _profile_list(value) -> list:
+    """Coerce a possibly-malformed engine_profiles value into a clean list of
+    profile dicts. settings.json is hand-editable and engine_profiles arrives
+    over an unauthenticated PUT, so it cannot be trusted to already be
+    well-shaped — a non-list value (None, a string, ...) degrades to "no
+    profiles", and non-dict entries within an otherwise-valid list are
+    skipped, the same "degrade, never raise" rule every other path in this
+    module follows."""
+    if not isinstance(value, list):
+        return []
+    return [p for p in value if isinstance(p, dict)]
+
+
 def _redact_profile(profile: dict) -> dict:
     """Blank a saved engine profile's secret fields; report which were set."""
     safe = dict(profile)
@@ -60,13 +73,15 @@ def _redact_profile(profile: dict) -> dict:
     return safe
 
 
-def _restore_profile_secrets(new_profiles: list, old_profiles: list) -> list:
+def _restore_profile_secrets(new_profiles, old_profiles) -> list:
     """Blank secret fields in an incoming PUT mean 'unchanged' — fill them
     back in from the matching stored profile (matched by name), the same
-    rule the top-level settings already follow."""
-    old_by_name = {p.get("name"): p for p in old_profiles}
+    rule the top-level settings already follow. Both arguments are coerced
+    through _profile_list first, so malformed shapes degrade instead of
+    raising (see _profile_list)."""
+    old_by_name = {p.get("name"): p for p in _profile_list(old_profiles)}
     merged = []
-    for profile in new_profiles:
+    for profile in _profile_list(new_profiles):
         profile = dict(profile)
         profile.pop("secrets_set", None)
         prior = old_by_name.get(profile.get("name"), {})
@@ -159,7 +174,7 @@ def get_settings():
         safe[key] = ""
     safe["secrets_set"] = {k: bool(raw.get(k)) for k in SECRET_KEYS}
     safe["engine_profiles"] = [_redact_profile(p)
-                               for p in raw.get("engine_profiles", [])]
+                               for p in _profile_list(raw.get("engine_profiles"))]
     return safe
 
 
@@ -171,8 +186,14 @@ def put_settings(values: dict):
         if key in values and values[key] == "":
             values.pop(key)
     if "engine_profiles" in values:
-        values["engine_profiles"] = _restore_profile_secrets(
-            values["engine_profiles"], service.settings.get("engine_profiles", []))
+        if isinstance(values["engine_profiles"], list):
+            values["engine_profiles"] = _restore_profile_secrets(
+                values["engine_profiles"], service.settings.get("engine_profiles"))
+        else:
+            # Not a list at all — degrade the same way a malformed *stored*
+            # value does (treat as absent) rather than writing an empty
+            # profile list over whatever is actually saved, or 500ing.
+            values.pop("engine_profiles")
     if values:  # a PUT of only blanked secrets is a no-op, not a full rewrite
         service.save_settings(values)
     return {"ok": True}

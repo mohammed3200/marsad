@@ -124,6 +124,59 @@ class ApiGateTests(unittest.TestCase):
         self.assertEqual(stored["openai_api_key"], _FAKE_PROFILE_KEY)
         self.assertEqual(stored["claude_api_key"], "")
 
+    # ── malformed engine_profiles must degrade, never 500 (fix round 2) ──
+    # engine_profiles is hand-editable JSON on disk and PUT-able by any local
+    # caller, so _redact_profile / _restore_profile_secrets cannot assume it
+    # is already a clean list of dicts. Each test below is self-contained
+    # (sets service.settings["engine_profiles"] itself) so run order doesn't
+    # matter.
+
+    def test_get_with_stored_profiles_as_a_string_degrades_to_empty(self):
+        from api.app import service
+        service.settings["engine_profiles"] = "not-a-list"
+        r = _client().get("/api/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["engine_profiles"], [])
+
+    def test_get_with_stored_profiles_as_none_degrades_to_empty(self):
+        from api.app import service
+        service.settings["engine_profiles"] = None
+        r = _client().get("/api/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["engine_profiles"], [])
+
+    def test_get_with_a_bad_entry_mixed_into_stored_profiles_skips_it(self):
+        from api.app import service
+        service.settings["engine_profiles"] = [{"name": "ok"}, "bad-entry", 42]
+        r = _client().get("/api/settings")
+        self.assertEqual(r.status_code, 200)
+        profiles = r.json()["engine_profiles"]
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]["name"], "ok")
+        # read-only: the stored (still-malformed) list itself is untouched
+        self.assertEqual(len(service.settings["engine_profiles"]), 3)
+
+    def test_put_with_engine_profiles_as_a_string_is_ignored_not_wiped(self):
+        from api.app import service
+        service.settings["engine_profiles"] = [{"name": "keep-me"}]
+        r = _client().put("/api/settings", json={"engine_profiles": "not-a-list"})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        # malformed shape is dropped from the PUT, not applied — a client
+        # sending garbage must not wipe whatever profiles are actually saved
+        self.assertEqual(service.settings["engine_profiles"], [{"name": "keep-me"}])
+
+    def test_put_with_a_bad_entry_mixed_into_submitted_profiles_skips_it(self):
+        from api.app import service
+        service.settings["engine_profiles"] = []
+        r = _client().put("/api/settings",
+                          json={"engine_profiles": [{"name": "ok"}, "bad-entry"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        stored = service.settings["engine_profiles"]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["name"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()
