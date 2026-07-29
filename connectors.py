@@ -14,6 +14,7 @@
 import imaplib
 import smtplib
 import email
+import html as _html
 import json
 import os
 import datetime
@@ -832,6 +833,15 @@ class ConnectorHub:
 # ════════════════════════════════════════════════════
 # بناء HTML للتقرير المُرسَل بالبريد
 # ════════════════════════════════════════════════════
+def _h(value) -> str:
+    """Escape a value for HTML interpolation.
+
+    Report content is model output derived from field reports that arrive from
+    WhatsApp groups, inbound email and watched folders — i.e. from outside the
+    trust boundary. The PDF exporter escapes; this path must too."""
+    return _html.escape("" if value is None else str(value), quote=True)
+
+
 def build_report_html(results: dict) -> str:
     chief  = results.get("chief", {})
     health = chief.get("overall_health", "غير محدد")
@@ -844,10 +854,10 @@ def build_report_html(results: dict) -> str:
         actions_rows += f"""
         <tr>
           <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;
-                     font-weight:bold;">{act.get('priority','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('action','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('owner','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('deadline','')}</td>
+                     font-weight:bold;">{_h(act.get('priority',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('action',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('owner',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('deadline',''))}</td>
         </tr>"""
 
     kpi_cards = ""
@@ -857,9 +867,9 @@ def build_report_html(results: dict) -> str:
         kpi_cards += f"""
         <div style="background:#f8fafc;border:1px solid {sc};border-radius:8px;
                     padding:12px;text-align:center;min-width:100px;">
-          <div style="font-size:20px;font-weight:bold;color:{sc};">{kpi.get('value','')}</div>
-          <div style="font-size:11px;color:#64748b;">{kpi.get('name','')}</div>
-          <div style="font-size:14px;">{kpi.get('trend','→')}</div>
+          <div style="font-size:20px;font-weight:bold;color:{sc};">{_h(kpi.get('value',''))}</div>
+          <div style="font-size:11px;color:#64748b;">{_h(kpi.get('name',''))}</div>
+          <div style="font-size:14px;">{_h(kpi.get('trend','→'))}</div>
         </div>"""
 
     return f"""
@@ -877,7 +887,7 @@ def build_report_html(results: dict) -> str:
         <div style="background:{color}20;border:2px solid {color};border-radius:10px;
                     padding:14px;text-align:center;margin:16px 0;">
           <span style="font-size:18px;font-weight:bold;color:{color};">
-            الحالة العامة: {health}
+            الحالة العامة: {_h(health)}
           </span>
         </div>
 
@@ -888,7 +898,7 @@ def build_report_html(results: dict) -> str:
 
         <h2 style="color:#1e3a5f;font-size:15px;">الملخص التنفيذي</h2>
         <p style="line-height:1.8;color:#334155;font-size:13px;">
-          {chief.get('executive_summary', '')}
+          {_h(chief.get('executive_summary', ''))}
         </p>
 
         <h2 style="color:#1e3a5f;font-size:15px;">خطة العمل الفورية</h2>
