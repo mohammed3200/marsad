@@ -186,13 +186,20 @@ def put_settings(values: dict):
         if key in values and values[key] == "":
             values.pop(key)
     if "engine_profiles" in values:
-        if isinstance(values["engine_profiles"], list):
+        incoming = values["engine_profiles"]
+        # A non-empty list that filters down to zero valid entries (all
+        # garbage) is malformed, not an instruction to clear every saved
+        # profile — drop it the same as a non-list value, below. Only a
+        # list that was *already* empty is a genuine "clear my profiles".
+        garbage_only = isinstance(incoming, list) and incoming and not _profile_list(incoming)
+        if isinstance(incoming, list) and not garbage_only:
             values["engine_profiles"] = _restore_profile_secrets(
-                values["engine_profiles"], service.settings.get("engine_profiles"))
+                incoming, service.settings.get("engine_profiles"))
         else:
-            # Not a list at all — degrade the same way a malformed *stored*
-            # value does (treat as absent) rather than writing an empty
-            # profile list over whatever is actually saved, or 500ing.
+            # Not a list at all, or a list of nothing but garbage — degrade
+            # the same way a malformed *stored* value does (treat as
+            # absent) rather than writing an empty profile list over
+            # whatever is actually saved, or 500ing.
             values.pop("engine_profiles")
     if values:  # a PUT of only blanked secrets is a no-op, not a full rewrite
         service.save_settings(values)

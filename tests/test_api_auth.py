@@ -187,6 +187,54 @@ class ApiGateTests(unittest.TestCase):
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["name"], "ok")
 
+    def test_put_with_only_garbage_entries_does_not_wipe_stored_profiles(self):
+        """fix round 2 regression: a non-empty submitted list that filters
+        down to zero valid entries (all garbage) was passing the `if
+        values:` truthiness check as [] and getting persisted — silently
+        deleting every saved profile and the real provider keys inside
+        them. Must be treated as malformed and dropped, the same as a
+        non-list value, not as an instruction to clear the profiles."""
+        from api.app import service
+        service.settings["engine_profiles"] = [{
+            "name": "real1",
+            "ai_backend": "gemini",
+            "ai_timeout": 180,
+            "ollama_url": "http://localhost:11434",
+            "ollama_model": "llama3.2",
+            "claude_api_key": "",
+            "claude_model": "claude-opus-4-5",
+            "openai_api_key": "",
+            "openai_base_url": "https://api.openai.com/v1",
+            "openai_model": "gpt-4o-mini",
+            "gemini_api_key": _FAKE_PROFILE_KEY,
+            "gemini_model": "gemini-2.0-flash",
+            "azure_endpoint": "",
+            "azure_api_key": "",
+            "azure_deployment": "",
+            "azure_api_version": "2024-06-01",
+        }]
+
+        r = _client().put("/api/settings", json={"engine_profiles": ["bad-entry", 42]})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+
+        stored = service.settings["engine_profiles"]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["name"], "real1")
+        self.assertEqual(stored[0]["gemini_api_key"], _FAKE_PROFILE_KEY)
+
+    def test_put_with_explicitly_empty_engine_profiles_still_clears_them(self):
+        """The garbage-filters-to-empty guard above must not overcorrect: a
+        client that legitimately sends engine_profiles: [] to clear its
+        saved profiles has to still work."""
+        from api.app import service
+        service.settings["engine_profiles"] = [{"name": "to-be-cleared"}]
+
+        r = _client().put("/api/settings", json={"engine_profiles": []})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        self.assertEqual(service.settings["engine_profiles"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
