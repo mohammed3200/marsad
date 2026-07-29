@@ -45,6 +45,16 @@ class ApiGateTests(unittest.TestCase):
         # any test method below.
         cls._iso = isolated_state()
         cls._root = cls._iso.__enter__()
+        # Tripwire: every test in this class mutates settings through the
+        # live AppService singleton, so if isolated_state() ever failed to
+        # redirect backend.settings_bridge.SETTINGS_F — a bug in the helper,
+        # or this class running via some path that bypasses it — that would
+        # mean writing to the developer's real settings.json. Fail loudly
+        # here rather than risk it silently.
+        import backend.settings_bridge as sb
+        assert str(sb.SETTINGS_F).startswith(str(cls._root)), (
+            "isolated_state() did not redirect SETTINGS_F into the temp "
+            "root — refusing to run this suite against the real settings.json")
 
     @classmethod
     def tearDownClass(cls):
