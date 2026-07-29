@@ -74,6 +74,25 @@ Canvas {
         case "outline":   // empty state — hairline square
             box(m, m, w - 2*m, h - 2*m, false)
             break
+        case "eye": {     // password visible — almond outline + pupil
+            ctx.beginPath()
+            ctx.moveTo(m, h/2)
+            ctx.quadraticCurveTo(w/2, m - 1, w - m, h/2)
+            ctx.quadraticCurveTo(w/2, h - m + 1, m, h/2)
+            ctx.stroke()
+            ctx.beginPath(); ctx.arc(w/2, h/2, 1.8, 0, 2*Math.PI); ctx.fill()
+            break
+        }
+        case "eyeoff": {  // password hidden — eye + slash
+            ctx.beginPath()
+            ctx.moveTo(m, h/2)
+            ctx.quadraticCurveTo(w/2, m - 1, w - m, h/2)
+            ctx.quadraticCurveTo(w/2, h - m + 1, m, h/2)
+            ctx.stroke()
+            ctx.beginPath(); ctx.arc(w/2, h/2, 1.8, 0, 2*Math.PI); ctx.fill()
+            line(w*0.22, h*0.80, w*0.78, h*0.20)
+            break
+        }
         }
     }
 }

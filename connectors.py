@@ -28,10 +28,14 @@ from email.mime.application import MIMEApplication
 from pathlib import Path
 
 try:
-    from core.paths import DATA_DIR as _DATA_DIR
-    LOG_DIR = _DATA_DIR / "logs"
+    from core.paths import DATA_DIR, BUNDLE_DIR
+    from core.errors import friendly_error
+    LOG_DIR = DATA_DIR / "logs"
 except Exception:  # pragma: no cover — core not importable in isolation
-    LOG_DIR = Path(__file__).parent / "logs"
+    DATA_DIR = BUNDLE_DIR = Path(__file__).parent
+    LOG_DIR = DATA_DIR / "logs"
+    def friendly_error(raw):
+        return str(raw)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -74,9 +78,11 @@ class EmailConnector:
             mail.logout()
             return True, f"✓ الاتصال بـ {self.user} ناجح"
         except imaplib.IMAP4.error as e:
-            return False, f"خطأ في تسجيل الدخول: {e}"
+            log.warning(f"IMAP login failed for {self.user}: {e}")
+            return False, friendly_error(str(e))
         except Exception as e:
-            return False, f"خطأ في الاتصال: {e}"
+            log.warning(f"IMAP connection failed ({self.imap_host}): {e}")
+            return False, friendly_error(str(e))
 
     def fetch_new(self) -> list:
         """سحب الرسائل الجديدة غير المقروءة"""
@@ -189,7 +195,7 @@ class EmailConnector:
         if self.contacts:
             emp = self.contacts.find_by_email(sl.split("<")[-1].strip(">").strip())
             if emp:
-                from contacts_manager import DEPT_KEY_MAP
+                from core.contacts import DEPT_KEY_MAP
                 return DEPT_KEY_MAP.get(emp.get("sub_dept", ""), "admin")
         # 2. من الخريطة الثابتة
         for addr, dept in self.dept_map.items():
@@ -280,10 +286,20 @@ async function start() {
         printQRInTerminal: true
     })
     sock.ev.on('creds.update', saveCreds)
+    async function post(pathname, body) {
+        try {
+            const fetch = (await import('node-fetch')).default
+            await fetch(`http://localhost:5051${pathname}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-WA-Token': '__WA_TOKEN__' },
+                body: JSON.stringify(body)
+            })
+        } catch(e) {}
+    }
     sock.ev.on('connection.update', ({ connection, qr }) => {
-        if (qr)         console.log('[WA] امسح QR Code الآن...')
-        if (connection === 'open')  console.log('[WA] متصل!')
-        if (connection === 'close') setTimeout(start, 3000)
+        if (qr)       { console.log('[WA] امسح QR Code الآن...'); post('/wa_qr', { qr }) }
+        if (connection === 'open')  { console.log('[WA] متصل!'); post('/wa_status', { linked: true, phone: (sock.user && sock.user.id) || '' }) }
+        if (connection === 'close') { post('/wa_status', { linked: false }); setTimeout(start, 3000) }
     })
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
@@ -387,14 +403,22 @@ class WhatsAppReceiver:
     on_message([report]). stdlib فقط — لا تبعيات جديدة."""
 
     def __init__(self, port: int, on_message, dept_fn=None, logger=print,
-                 token: str = ""):
+                 token: str = "", on_event=None):
         self.port       = int(port)
         self.on_message = on_message
+        self.on_event   = on_event      # (kind, payload) — kind ∈ "qr" | "status"
         self.dept_fn    = dept_fn or (lambda gid: "admin")
         self.log        = logger
         self.token      = token
         self._server    = None
         self._thread    = None
+
+    def _emit_event(self, kind, payload):
+        if self.on_event:
+            try:
+                self.on_event(kind, payload)
+            except Exception as e:
+                log.warning(f"واتساب: خطأ في حدث {kind}: {e}")
 
     def start(self):
         import http.server
@@ -414,7 +438,8 @@ class WhatsAppReceiver:
                 self._ok()
 
             def do_POST(self):
-                if self.path.rstrip("/") != "/wa_message":
+                path = self.path.rstrip("/")
+                if path not in ("/wa_message", "/wa_qr", "/wa_status"):
                     self.send_response(404); self.end_headers(); return
                 if recv.token and self.headers.get("X-WA-Token") != recv.token:
                     self.send_response(403); self.end_headers(); return
@@ -423,6 +448,12 @@ class WhatsAppReceiver:
                     data   = json.loads(self.rfile.read(length) or b"{}")
                 except Exception:
                     self.send_response(400); self.end_headers(); return
+                if path == "/wa_qr":
+                    recv._emit_event("qr", {"qr": data.get("qr", "")})
+                    self._ok(); return
+                if path == "/wa_status":
+                    recv._emit_event("status", data)
+                    self._ok(); return
                 text = (data.get("text") or "").strip()
                 gid  = data.get("group_id", "")
                 if text:
@@ -462,6 +493,35 @@ class WhatsAppReceiver:
 # ════════════════════════════════════════════════════
 # الامتدادات المدعومة كتقارير ميدانية
 DOC_PATTERNS = ["*.xlsx", "*.xls", "*.csv", "*.json", "*.txt", "*.pdf", "*.docx"]
+
+
+def is_internal_file(fpath) -> bool:
+    """True إذا كان الملف من ملفات التطبيق الداخلية — الإعدادات وجهات الاتصال
+    ومخرجات التحليل ليست تقارير ميدانية، و settings.json قد يحمل أسراراً لا
+    يجوز أن تدخل قائمة التقارير (ثم إلى المحرّك) أصلاً."""
+    try:
+        p = Path(fpath).resolve()
+    except Exception:
+        return False
+    names = {"settings.json", "settings.example.json",
+             "sample_reports.json", "whatsapp_bridge.js"}
+    for base in {DATA_DIR, BUNDLE_DIR}:
+        try:
+            if p.parent == Path(base).resolve() and p.name in names:
+                return True
+        except Exception:
+            pass
+    try:
+        if p == (DATA_DIR / "data" / "contacts.json").resolve():
+            return True
+        if p.suffix.lower() == ".json":
+            p.relative_to((DATA_DIR / "reports").resolve())
+            return True
+    except ValueError:
+        pass
+    except Exception:
+        pass
+    return False
 
 
 def guess_dept(filename: str) -> str:
@@ -548,8 +608,11 @@ def _read_docx(fpath: Path) -> str:
 def read_file_to_report(fpath, source: str = "upload",
                         dept: str = None, from_label: str = None) -> dict | None:
     """قراءة ملف واحد وتحويله إلى تقرير — يدعم xlsx/xls/csv/json/txt/pdf/docx.
-    يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ."""
+    يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ أو ملفات التطبيق الداخلية."""
     fpath = Path(fpath)
+    if is_internal_file(fpath):
+        log.warning(f"رُفض ملف داخلي كتقرير: {fpath.name}")
+        return None
     ext   = fpath.suffix.lower()
     dept  = dept or guess_dept(fpath.name)
 
@@ -668,6 +731,7 @@ class ConnectorHub:
         self._buffer  = []
         self._lock    = threading.Lock()
         self._log_fn  = print
+        self._event_fn = None
         self.whatsapp = None
         # الرمز يُحفظ في الإعدادات حتى يبقى ثابتاً عند إعادة بناء المحور —
         # وإلا توقف ملف الجسر المولَّد سابقاً عن العمل (403)
@@ -676,6 +740,10 @@ class ConnectorHub:
 
     def set_logger(self, fn):
         self._log_fn = fn
+
+    def set_event_handler(self, fn):
+        """معالج أحداث واتساب غير الرسائل: ("qr", payload) و ("status", payload)."""
+        self._event_fn = fn
 
     # ── واتساب ──
     def _wa_dept(self, group_id: str) -> str:
@@ -688,7 +756,8 @@ class ConnectorHub:
         if self.whatsapp:
             self.whatsapp.stop()
         self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept,
-                                         self._log_fn, token=self.wa_token)
+                                         self._log_fn, token=self.wa_token,
+                                         on_event=self._event_fn)
         self.whatsapp.start()
 
     def _append(self, reports: list):

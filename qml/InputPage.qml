@@ -13,6 +13,23 @@ PageFrame {
     ]
     readonly property var sourceOptions: ["يدوي", "بريد إلكتروني", "واتساب", "ERP"]
 
+    // display labels for the raw source/dept values stored on report dicts —
+    // presentation only, the data is never rewritten
+    function sourceLabel(s) {
+        return s === "email"    ? "بريد"
+             : s === "whatsapp" ? "واتساب"
+             : s === "system"   ? "نظام"
+             : s === "erp"      ? "ERP" : s
+    }
+    function deptLabel(d) {
+        const m = { "ran": "شبكة الراديو RAN", "core": "شبكة النواة Core",
+                    "ops": "العمليات", "quality": "الجودة", "safety": "السلامة",
+                    "civil": "الأعمال الإنشائية", "cost": "التكاليف",
+                    "contract": "العقود", "procure": "المشتريات",
+                    "supply": "المخازن والتوريد", "admin": "إداري" }
+        return m[d] || d
+    }
+
     // ── actions ──
     RowLayout {
         Layout.fillWidth: true
@@ -63,13 +80,13 @@ PageFrame {
                             Layout.preferredWidth: 120
                             spacing: 2
                             Text {
-                                text: source
+                                text: pg.sourceLabel(source)
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; font.bold: true
                                 color: Theme.colors.ink
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: dept
+                                text: pg.deptLabel(dept)
                                 elide: Text.ElideLeft
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                                 color: Theme.colors.ink3
@@ -83,7 +100,8 @@ PageFrame {
                                 text: {
                                     var parts = []
                                     parts.push(from_ || "—")
-                                    if (date) parts.push(date)
+                                    // isolate the date run so it never reorders inside the RTL line
+                                    if (date) parts.push("⁦" + date + "⁩")
                                     return parts.join("  ·  ")
                                 }
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption

@@ -9,9 +9,13 @@ Item {
     property string title: ""
     property string subtitle: ""
     default property alias body: bodyHolder.data
+    // optional sticky bottom bar (e.g. the Settings save bar) — zero height,
+    // no visual change, on pages that don't set it
+    property alias footer: footerHolder.data
 
     ScrollView {
-        anchors.fill: parent
+        anchors { top: parent.top; left: parent.left; right: parent.right
+                  bottom: footerBar.top }
         contentWidth: availableWidth
         clip: true
 
@@ -58,5 +62,18 @@ Item {
                 }
             }
         }
+    }
+
+    // sticky footer bar — height 0 unless a page slots `footer` content
+    Item {
+        id: footerBar
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: footerHolder.children.length > 0 ? 60 : 0
+        Rectangle {
+            anchors { top: parent.top; left: parent.left; right: parent.right }
+            height: 1; color: Theme.colors.border
+            visible: footerBar.height > 0
+        }
+        Item { id: footerHolder; anchors.fill: parent }
     }
 }

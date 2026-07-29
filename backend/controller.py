@@ -23,6 +23,13 @@ REPORTS    = DATA_DIR / "reports"                  # writable output
 SAMPLES_F  = BUNDLE_DIR / "sample_reports.json"    # shipped demo input
 LATEST_F   = REPORTS / "latest.json"
 
+# مفاتيح المحرّك التي تُلتقط في ملفات الإعداد (engine profiles)
+ENGINE_KEYS = ("ai_backend", "ai_timeout", "ollama_url", "ollama_model",
+               "claude_api_key", "claude_model", "openai_api_key",
+               "openai_base_url", "openai_model", "gemini_api_key",
+               "gemini_model", "azure_endpoint", "azure_api_key",
+               "azure_deployment", "azure_api_version")
+
 
 class AppController(QObject):
     dashModelChanged  = Signal()
@@ -42,6 +49,13 @@ class AppController(QObject):
     notify            = Signal(str)          # transient user message
     navRequested      = Signal(int)          # page index to switch to
     settingsChanged   = Signal()
+    exportsChanged    = Signal()
+    recipientsChanged = Signal()
+    nodeStatusChanged = Signal()
+    engineProfilesChanged = Signal()
+    modelsChanged       = Signal()
+    waChanged         = Signal()
+    _waEvent          = Signal(str, "QVariant")  # receiver thread → GUI thread
     _collected        = Signal("QVariant")   # reports gathered off the GUI thread
     _filesAdded       = Signal("QVariant")   # files parsed off the GUI thread
 
@@ -68,8 +82,23 @@ class AppController(QObject):
         self._collected.connect(self._on_collected)
         self._filesAdded.connect(self._on_files_added)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
+        self._exports    = []
+        self._recipients = []
+        self._node_status = ""
+        self._wa_qr_matrix = []
+        self._wa_linked    = False
+        self._wa_phone     = ""
+        self._wa_dialog_open = False
+        self._wa_starting  = False
+        self._wa_proc      = None
+        self._models       = []
+        self._models_busy  = False
+        self._waEvent.connect(self._on_wa_event)
+        self._hub.set_event_handler(self._wa_event_from_thread)
         self._load_latest()
         self._start_whatsapp_if_enabled()
+        self._refresh_exports()
+        self._refresh_recipients()
 
     # ───────────────────────── properties ─────────────────────────
     @Property("QVariant", notify=dashModelChanged)
@@ -126,6 +155,64 @@ class AppController(QObject):
     @Property("QVariant", notify=settingsChanged)
     def settings(self):
         return self._settings
+
+    @Property("QVariant", notify=exportsChanged)
+    def exportsModel(self):
+        """ملفات التقارير المُصدَّرة (PDF/XLSX) — الأحدث أولاً."""
+        return self._exports
+
+    @Property("QVariant", notify=recipientsChanged)
+    def recipientsModel(self):
+        """مستلمو التقرير الحاليون — report_recipients أو مفاتيح email_dept_map."""
+        return self._recipients
+
+    @Property(str, notify=nodeStatusChanged)
+    def nodeStatus(self):
+        """"" أو رقم الإصدار (v…) أو "missing" — حالة تثبيت Node.js."""
+        return self._node_status
+
+    @Property("QVariant", notify=waChanged)
+    def waQrMatrix(self):
+        """مصفوفة رمز QR الحالية (صفوف من "0/1") — فارغة بلا رمز."""
+        return self._wa_qr_matrix
+
+    @Property(bool, notify=waChanged)
+    def waLinked(self):
+        return self._wa_linked
+
+    @Property(str, notify=waChanged)
+    def waPhone(self):
+        return self._wa_phone
+
+    @Property(bool, notify=waChanged)
+    def waStarting(self):
+        """True أثناء تجهيز/تشغيل جسر واتساب."""
+        return self._wa_starting
+
+    @Property(bool, notify=waChanged)
+    def waDialogOpen(self):
+        return self._wa_dialog_open
+
+    @waDialogOpen.setter
+    def waDialogOpen(self, v):
+        self._wa_dialog_open = bool(v)
+        self.waChanged.emit()
+
+    @Property("QVariant", notify=engineProfilesChanged)
+    def engineProfilesModel(self):
+        """ملفات المحرّك المحفوظة: [{name, ai_backend}]."""
+        return [{"name": p.get("name", ""),
+                 "ai_backend": p.get("ai_backend", "ollama")}
+                for p in self._settings.get("engine_profiles", [])]
+
+    @Property("QVariant", notify=modelsChanged)
+    def modelsModel(self):
+        """قائمة النماذج المجلوبة من المزوّد الحالي."""
+        return self._models
+
+    @Property(bool, notify=modelsChanged)
+    def modelsBusy(self):
+        return self._models_busy
 
     @Property(str, constant=True)
     def todayLabel(self):
@@ -328,6 +415,7 @@ class AppController(QObject):
             p = str(REPORTS / f"marsad_{ts}{ext}")
         try:
             out = fn(self._results, p)
+            self._refresh_exports()
             self.exportDone.emit(out)
             self.notify.emit(f"حُفظ الملف: {out}")
         except Exception as e:
@@ -338,6 +426,52 @@ class AppController(QObject):
     def openReportsFolder(self):
         REPORTS.mkdir(exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(REPORTS)))
+
+    def _refresh_exports(self):
+        """أعد قراءة ملفات التقارير المُصدَّرة (PDF/XLSX) — الأحدث أولاً."""
+        items = []
+        try:
+            REPORTS.mkdir(exist_ok=True)
+            files = [p for p in REPORTS.iterdir()
+                     if p.suffix.lower() in (".pdf", ".xlsx")]
+            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for p in files[:20]:
+                st = p.stat()
+                items.append({
+                    "name":   p.name,
+                    "path":   str(p),
+                    "sizeKb": max(1, int(st.st_size / 1024)),
+                    "date":   datetime.datetime.fromtimestamp(
+                                  st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                })
+        except Exception:
+            items = []
+        self._exports = items
+        self.exportsChanged.emit()
+
+    def _refresh_recipients(self):
+        recips = (self._settings.get("report_recipients")
+                  or list(self._settings.get("email_dept_map", {}).keys()))
+        self._recipients = list(recips or [])
+        self.recipientsChanged.emit()
+
+    @Slot(str)
+    def openFile(self, path):
+        """افتح ملفاً مُصدَّراً — مقصور على ملفات داخل مجلد التقارير."""
+        try:
+            p = Path(path).resolve()
+            p.relative_to(REPORTS.resolve())
+        except Exception:
+            self.notify.emit("مسار غير مسموح به")
+            return
+        if p.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+
+    @Slot()
+    def installNode(self):
+        """افتح صفحة تنزيل Node.js الرسمية — التثبيت يتم من عندها."""
+        QDesktopServices.openUrl(QUrl("https://nodejs.org/en/download"))
+        self.notify.emit("افتحنا صفحة تنزيل Node.js — ثبّته ثم أعد الفحص")
 
     @Slot()
     def sendEmailReport(self):
@@ -381,13 +515,81 @@ class AppController(QObject):
         values = self._to_py(values)
         if values:
             self._settings.update(dict(values))
-        save_settings(self._settings)
+        try:
+            save_settings(self._settings)
+        except Exception as e:
+            self.notify.emit(f"تعذّر حفظ الإعدادات: {e}")
+            return
         self._ai.settings = self._settings
         # الموصّلات تلتقط الإعدادات عند الإنشاء — أعد بناء الـ hub حتى تسري
         # بيانات البريد / مجلد ERP / واتساب الجديدة فوراً.
         self._rebuild_hub()
+        self._refresh_recipients()
+        self._models = []          # قائمة النماذج كانت لمزوّد سابق — أعد الجلب
+        self.modelsChanged.emit()
         self.settingsChanged.emit()
         self.notify.emit("حُفظت الإعدادات")
+
+    # ── ملفات المحرّك (engine profiles) ──
+    @Slot(str)
+    def saveEngineProfile(self, name):
+        """احفظ مفاتيح المحرّك الحالية كملف مُسمّى (الافتراضي يبقى Ollama)."""
+        name = (name or "").strip()
+        if not name:
+            self.notify.emit("أدخل اسماً للملف أولاً")
+            return
+        profiles = [p for p in self._settings.get("engine_profiles", [])
+                    if p.get("name") != name]
+        snap = {k: self._settings.get(k) for k in ENGINE_KEYS}
+        snap["name"] = name
+        profiles.append(snap)
+        self._settings["engine_profiles"] = profiles
+        save_settings(self._settings)
+        self.engineProfilesChanged.emit()
+        self.notify.emit(f"حُفظ الملف «{name}»")
+
+    @Slot(str)
+    def switchEngineProfile(self, name):
+        """فعّل ملفاً محفوظاً — تُنسخ مفاتيحه إلى الإعدادات وتسري فوراً."""
+        for p in self._settings.get("engine_profiles", []):
+            if p.get("name") == name:
+                for k in ENGINE_KEYS:
+                    if k in p:
+                        self._settings[k] = p[k]
+                self.saveSettings({})
+                return
+        self.notify.emit("الملف غير موجود")
+
+    @Slot(str)
+    def deleteEngineProfile(self, name):
+        profiles = [p for p in self._settings.get("engine_profiles", [])
+                    if p.get("name") != name]
+        self._settings["engine_profiles"] = profiles
+        save_settings(self._settings)
+        self.engineProfilesChanged.emit()
+        self.notify.emit(f"حُذف الملف «{name}»")
+
+    @Slot()
+    def fetchModels(self):
+        """اجلب قائمة النماذج من المزوّد الحالي على خيط منفصل."""
+        if self._models_busy:
+            return
+        self._models_busy = True
+        self.modelsChanged.emit()
+        threading.Thread(target=self._run_fetch_models, daemon=True).start()
+
+    def _run_fetch_models(self):
+        try:
+            ok, out = self._ai.list_models()
+        except Exception as e:
+            ok, out = False, str(e)
+        self._models = list(out) if ok and isinstance(out, list) else []
+        self._models_busy = False
+        self.modelsChanged.emit()
+        if self._models:
+            self.notify.emit(f"جُلبت {len(self._models)} نموذجاً")
+        else:
+            self.notify.emit(out if isinstance(out, str) else "تعذّر جلب النماذج")
 
     def _rebuild_hub(self):
         try:
@@ -396,6 +598,7 @@ class AppController(QObject):
             self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
+        self._hub.set_event_handler(self._wa_event_from_thread)
         self._start_whatsapp_if_enabled()
 
     @Slot()
@@ -411,8 +614,8 @@ class AppController(QObject):
             ok, msg = self._hub.test_email()
         except Exception as e:
             ok, msg = False, str(e)
+        # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
         self.emailTested.emit(ok, msg)
-        self.notify.emit(msg)
         self._set_testing_email(False)
 
     @Slot(result="QVariant")
@@ -477,7 +680,134 @@ class AppController(QObject):
     def checkNode(self):
         from connectors import WhatsAppHelper
         ok, msg = WhatsAppHelper.check_nodejs()
+        self._node_status = msg if ok else "missing"
+        self.nodeStatusChanged.emit()
         self.notify.emit(f"Node.js: {msg}" if ok else msg)
+
+    # ── ربط واتساب برمز QR داخل التطبيق ──
+    @Slot()
+    def showWhatsAppQr(self):
+        """افتح نافذة الرمز وشغّل الجسر إن لم يكن مربوطاً بعد."""
+        self._wa_dialog_open = True
+        self.waChanged.emit()
+        if not self._wa_linked:
+            self.startWhatsAppBridge()
+
+    @Slot()
+    def startWhatsAppBridge(self):
+        """جهّز الحزم (أول مرة) وشغّل whatsapp_bridge.js على خيط منفصل."""
+        if self._wa_proc or self._wa_starting:
+            return
+        # الجسر يُرسل الرمز والحالة عبر HTTP إلى المستقبِل — شغّله أولاً حتى لو
+        # كان استقبال واتساب معطّلاً في الإعدادات، وإلا ضاعت الأحداث وانتظرت النافذة بلا نهاية
+        if not self._hub.whatsapp:
+            try:
+                port = int(self._settings.get("whatsapp_port", 5051))
+                self._hub.start_whatsapp(port)
+                self.logMessage.emit(f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
+            except Exception as e:
+                self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {e}")
+        self._wa_starting = True
+        self.waChanged.emit()
+        threading.Thread(target=self._run_bridge_start, daemon=True).start()
+
+    def _run_bridge_start(self):
+        import subprocess
+        try:
+            bridge = DATA_DIR / "whatsapp_bridge.js"
+            if not bridge.exists():
+                self.generateWhatsAppBridge()
+            if not (DATA_DIR / "node_modules").exists():
+                self.logMessage.emit("واتساب: تثبيت حزم Node (أول مرة فقط)…")
+                pkg = DATA_DIR / "package.json"
+                if not pkg.exists():
+                    pkg.write_text(json.dumps({
+                        "name": "marsad-wa-bridge", "version": "1.0.0",
+                        "type": "commonjs",
+                        "dependencies": {
+                            "@whiskeysockets/baileys": "^7.0.0-rc13",
+                            "express": "^4.18.0", "node-fetch": "^3.3.0",
+                            "pino": "^8.0.0",
+                        }}, indent=2), encoding="utf-8")
+                r = subprocess.run(["npm", "install"], cwd=str(DATA_DIR),
+                                   capture_output=True, text=True, timeout=600)
+                if r.returncode != 0:
+                    self.notify.emit("تعذّر تثبيت حزم Node — شغّل npm install يدوياً في مجلد البيانات")
+                    self._wa_starting = False
+                    self.waChanged.emit()
+                    return
+            log_dir = DATA_DIR / "logs"
+            log_dir.mkdir(exist_ok=True)
+            # وجّه خرج الجسر إلى ملف بدل إخفائه — أي فشل مستقبلي يُشخَّص من السجل
+            self._wa_log = open(log_dir / "bridge.log", "a", encoding="utf-8")
+            self._wa_proc = subprocess.Popen(
+                ["node", "whatsapp_bridge.js"], cwd=str(DATA_DIR),
+                stdout=self._wa_log, stderr=subprocess.STDOUT)
+            import atexit
+            atexit.register(self.stopWhatsAppBridge)
+            self.logMessage.emit("واتساب: الجسر يعمل — بانتظار رمز الربط")
+        except FileNotFoundError:
+            self.notify.emit("Node.js غير مثبّت — ثبّته أولاً من الخطوة 2")
+        except Exception as e:
+            self.notify.emit(f"تعذّر تشغيل الجسر: {e}")
+        self._wa_starting = False
+        self.waChanged.emit()
+
+    @Slot()
+    def stopWhatsAppBridge(self):
+        p, self._wa_proc = self._wa_proc, None
+        if p:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        log, self._wa_log = getattr(self, "_wa_log", None), None
+        if log:
+            try:
+                log.close()
+            except Exception:
+                pass
+
+    def _wa_event_from_thread(self, kind, payload):
+        """يُستدعى من خيط المستقبِل — مرّره إلى خيط الواجهة عبر إشارة."""
+        self._waEvent.emit(kind, dict(payload or {}))
+
+    @Slot(str, "QVariant")
+    def _on_wa_event(self, kind, payload):
+        payload = self._to_py(payload) or {}
+        if kind == "qr":
+            qr = payload.get("qr") or ""
+            if qr:
+                self._wa_qr_matrix = self._qr_matrix(qr)
+                self.waChanged.emit()
+        elif kind == "status":
+            linked = bool(payload.get("linked"))
+            if linked and not self._wa_linked:
+                self._wa_linked = True
+                self._wa_phone = str(payload.get("phone") or "")
+                self._wa_qr_matrix = []
+                self.notify.emit("تم ربط واتساب بنجاح")
+            elif not linked:
+                self._wa_linked = False
+            self.waChanged.emit()
+
+    def _qr_matrix(self, payload: str):
+        """حوّل نص QR إلى صفوف "0/1" تُرسم في QML — بلا ملفات صور."""
+        try:
+            import qrcode
+            q = qrcode.QRCode(border=0)
+            q.add_data(payload)
+            q.make(fit=True)
+            return ["".join("1" if c else "0" for c in row)
+                    for row in q.get_matrix()]
+        except ImportError:
+            # لا تدع النافذة تنتظر بلا نهاية — أظهر السبب للمستخدم
+            self.logMessage.emit("حزمة qrcode غير مثبّتة في بايثون الذي يشغّل التطبيق")
+            self.notify.emit("حزمة qrcode غير مثبّتة — ثبّت متطلبات التطبيق: pip install -r requirements.txt")
+            return []
+        except Exception as e:
+            self.logMessage.emit(f"تعذّر توليد رمز QR: {e}")
+            return []
 
     # ───────────────────────── dashboard ─────────────────────────
     @Slot()

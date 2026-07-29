@@ -230,10 +230,11 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.topMargin: 13; Layout.bottomMargin: 13
                                     spacing: 13
-                                    // Arabic-Indic order numeral
+                                    // Arabic-Indic order numeral — body font: Kufi's
+                                    // digits are short by design and read weak here
                                     Text {
                                         text: page.arabicNumeral(index + 1)
-                                        font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
+                                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.title; font.bold: true
                                         color: Theme.colors.accent
                                         Layout.alignment: Qt.AlignTop
                                         Layout.topMargin: 1

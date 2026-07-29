@@ -15,13 +15,23 @@ Key facts that shape every change:
 ## Build and run commands
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # optional
-pip install -r requirements.txt                      # PySide6, reportlab, openpyxl, PyPDF2, python-docx
+python3 -m venv .venv && source .venv/bin/activate   # required — the deps live in the venv
+pip install -r requirements.txt                      # PySide6, reportlab, openpyxl, PyPDF2, python-docx, qrcode
 cp settings.example.json settings.json               # then edit it (or configure via the UI)
-python app.py
+.venv/bin/python app.py                              # or `python app.py` with the venv activated
 ```
 
+The interpreter that launches the app must have **all** of requirements.txt — e.g. without `qrcode` the WhatsApp QR silently never renders (the app now shows an actionable toast instead of hanging). Running `/usr/bin/python3 app.py` on a PEP-668 (externally managed) system Python is the known trap: install into the venv, not the system.
+
 Requires a running LLM backend — a local **Ollama** server (`ollama pull llama3.2`, default) or an API key for Claude / OpenAI-compatible / Gemini / Azure OpenAI. All providers and all data sources (email, ERP folder, WhatsApp) are configured from the **الإعدادات (Settings)** tab in the app — no hand-editing of `settings.json` is needed at runtime.
+
+### Web UI (`web/` → served by the API)
+
+```bash
+cd web && npm install && npm run build   # → web/dist
+python -m api                            # http://127.0.0.1:8765/ — SPA at /, REST /api, WS /ws
+cd web && npm run dev                    # dev loop: Vite proxies /api + /ws to 127.0.0.1:8765
+```
 
 **No test suite and no linter exist in this project.** Verification is manual: run the app (`python app.py`) or render pages offscreen with the screenshot harness (below). There is no CI test job — CI only builds installers.
 
@@ -51,6 +61,8 @@ app.py                 Qt entry — QApplication (RTL) → bundled fonts → The
 core/                  UI-agnostic logic (no Qt import allowed)
 connectors.py          Email / ERP / WhatsApp ingestion + outbound email
 backend/               Qt bridge — theme, controller, worker, models, settings
+api/                   Qt-free FastAPI backend — REST (/api) + WebSocket (/ws) over AppService; mounts web/dist at /
+web/                   Web UI — React + TS + Vite + Tailwind v4 (RTL), builds to web/dist
 qml/                   Flat QML tree — Main + 6 pages + flat primitives
 assets/fonts/          Bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL)
 tools/                 capture_qt.py (screenshots) · build_linux.sh
@@ -62,28 +74,41 @@ packaging/             linux/build_deb.sh + marsad.desktop · windows/marsad.nsi
 - `engine.py` — `AIEngine.ask()` dispatches to five backends (`ai_backend` ∈ `ollama`·`claude`·`openai`·`gemini`·`azure`; `openai` is an OpenAI-compatible adapter — the editable `openai_base_url` covers OpenRouter/Groq/Together/DeepSeek/LM Studio). All HTTP goes through stdlib `urllib` via `_http_json()`, which **never raises** — failures return `{"error": …}`. `AGENT_PROMPTS` (11 agents), `WORKER_AGENTS` (10 domain agents: ops, quality, safety, civil, cost, contract, procure, supply, risk, schedule), `AgentsEngine.run_all(reports, progress_cb, agent_cb)`. Only **successful** worker outputs feed the `chief` coordinator. Results are saved to `reports/results_<ts>.json` + `reports/latest.json`. `_ensure_chief_schema()` guarantees the chief dict always has `overall_health`/`executive_summary`/`kpis`/`top_actions`/`dept_scores`/`achievements` even on LLM failure, so the dashboard and exporters never break. Request timeout is `ai_timeout` (settings, default 180s). `agent_cb(agent_id, state)` with state ∈ {running, done, error} drives live UI telemetry.
 - `contacts.py` — `ContactsDB` (JSON org chart in `data/contacts.json`) + `export_to_config()` (email→dept / whatsapp→dept maps the connectors route on).
 - `hijri.py` — self-contained Gregorian→Hijri conversion (no dependency); `dual_label()` produces the dual Hijri · Gregorian date shown in the sidebar.
-- `exporters.py` — `export_pdf(results, path)` (reportlab, RTL) + `export_excel(results, path)` (openpyxl).
+- `exporters.py` — `export_pdf(results, path)` (reportlab; registers bundled Noto Sans Arabic + JetBrains Mono from `assets/fonts/` — the base-14 fonts have no Arabic, and Noto Kufi renders **blank** in reportlab, so headings use Naskh-Bold; Arabic is shaped via **arabic-reshaper + python-bidi** (`ar()` helper), and en/em dashes are normalized to `-` so BiDi number runs like `60-80%` stay intact) + `export_excel(results, path)` (openpyxl, RTL sheets — Excel shapes Arabic via the OS).
 - `paths.py` — **frozen-paths split:** `BUNDLE_DIR` (read-only bundled assets) vs `DATA_DIR` (writable per-user state: `%APPDATA%/marsad`, `~/.local/share/marsad`). All mutable state (settings, reports, contacts, logs) goes under `DATA_DIR`; **never write next to the executable**. When run from source both are the repo root.
 
 ### `connectors.py` — ingestion + outbound email
 
-`EmailConnector` (IMAP/SMTP), `ERPConnector` (folder watch), `WhatsAppHelper` (generates the Baileys bridge JS), `WhatsAppReceiver` (stdlib `http.server` on `127.0.0.1:<whatsapp_port>/wa_message` — the Node bridge POSTs here), `ConnectorHub` (`collect_all()` facade + `start_whatsapp(port)`), `build_report_html()`. Module-level `read_file_to_report(path, source, dept, from_label)` + `guess_dept()` + `DOC_PATTERNS` turn one file into a report dict — used by both the ERP watcher and the input-page upload button. Supported: `.xlsx/.xls/.csv/.json/.txt/.pdf/.docx` (Excel needs openpyxl, PDF needs PyPDF2, Word needs python-docx — each degrades to an Arabic placeholder string if its lib is missing). **Connectors snapshot settings at construction** — the controller rebuilds the `ConnectorHub` on `saveSettings`.
+`EmailConnector` (IMAP/SMTP), `ERPConnector` (folder watch), `WhatsAppHelper` (generates the Baileys bridge JS — the bridge POSTs incoming group messages to `/wa_message`, the QR string to `/wa_qr`, and link state to `/wa_status`), `WhatsAppReceiver` (stdlib `http.server` on `127.0.0.1:<whatsapp_port>` — all three paths token-gated; non-message events flow through `ConnectorHub.set_event_handler`), `ConnectorHub` (`collect_all()` facade + `start_whatsapp(port)`), `build_report_html()`. Module-level `read_file_to_report(path, source, dept, from_label)` + `guess_dept()` + `DOC_PATTERNS` turn one file into a report dict — used by both the ERP watcher and the input-page upload button. Supported: `.xlsx/.xls/.csv/.json/.txt/.pdf/.docx` (Excel needs openpyxl, PDF needs PyPDF2, Word needs python-docx — each degrades to an Arabic placeholder string if its lib is missing). `is_internal_file()` refuses app-internal files (`settings.json`, `settings.example.json`, `sample_reports.json`, `whatsapp_bridge.js`, `data/contacts.json`, `reports/*.json`) so config/credentials never enter the report queue — `read_file_to_report` returns `None` for them on every path (upload picker, ERP watch, API upload). **Connectors snapshot settings at construction** — the controller rebuilds the `ConnectorHub` on `saveSettings`.
 
 ### `backend/` — the Qt/QML bridge
 
 - `theme.py` — `Theme(QObject)`: design tokens as `colors`/`fonts`/`fs` QVariantMaps (`fs` = the Arabic type scale: hero/display/title/section/body/small/caption px) + `statusColor(literal)` mapping the fixed Arabic status words to colours. Exposed to QML as the `Theme` context property.
-- `controller.py` — `AppController(QObject)`: the single object QML talks to (context property `app`). Owns settings, `ContactsDB`, `ConnectorHub`, `AIEngine`/`AgentsEngine`. Exposes notifying properties (`dashModel`, `reportDate`, `engineOnline/Status`, `busy`, `testing`/`testingEngine`/`testingEmail`, `settings`, `agentCount`, `agentsModel`, `reportsModel`, `reportCount`) and slots (`runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `addFiles`, `clearDashboard`, `pickReportFiles`/`pickErpFolder`, `goTo`, `exportPdf/Excel`, `sendEmailReport`, `testConnection`, `testEmail`, `generateWhatsAppBridge`, `checkNode`, `saveSettings`, contacts CRUD + `syncContacts`). **Blocking calls run off the GUI thread:** `testConnection`/`testEmail`/`collectReports` spawn daemon threads (guarded by `_testing_engine`/`_testing_email`/`_collecting` flags) and cross results back via signals — never call IMAP/HTTP synchronously from a slot. File/folder pickers use native `QFileDialog` (the app uses `QApplication`) — do **not** use the fragile `QtQuick.Dialogs` QML module.
+- `controller.py` — `AppController(QObject)`: the single object QML talks to (context property `app`). Owns settings, `ContactsDB`, `ConnectorHub`, `AIEngine`/`AgentsEngine`. Exposes notifying properties (`dashModel`, `reportDate`, `engineOnline/Status`, `busy`, `testing`/`testingEngine`/`testingEmail`, `settings`, `agentCount`, `agentsModel`, `reportsModel`, `reportCount`, `exportsModel`, `recipientsModel`, `nodeStatus`) and slots (`runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `addFiles`, `clearDashboard`, `pickReportFiles`/`pickErpFolder`, `goTo`, `exportPdf/Excel`, `openFile` (confined to `DATA_DIR/reports`), `sendEmailReport`, `testConnection`, `testEmail`, `generateWhatsAppBridge`, `checkNode`, `installNode`, `saveSettings`, contacts CRUD + `syncContacts`). **Blocking calls run off the GUI thread:** `testConnection`/`testEmail`/`collectReports` spawn daemon threads (guarded by `_testing_engine`/`_testing_email`/`_collecting` flags) and cross results back via signals — never call IMAP/HTTP synchronously from a slot. The Settings test buttons call `saveSettings` with the on-screen form values **before** testing (save-then-test), so tests always exercise what the user sees; a failed write surfaces a `notify` toast instead of dying silently. File/folder pickers use native `QFileDialog` (the app uses `QApplication`) — do **not** use the fragile `QtQuick.Dialogs` QML module.
 - `analysis_worker.py` — `AnalysisWorker` on a `QThread`; wraps `run_all`, re-emits agent/progress/log as signals. The worker never touches QML.
 - `models.py` — `AgentsModel` (11 agents + live state) and `ReportsModel` (`QAbstractListModel`s).
 - `settings_bridge.py` — load/save `settings.json`.
 
 ### `qml/` — flat directory (files auto-import each other by filename)
 
-`Main.qml` (sidebar shell + `StackLayout` + a transient toast bound to `app.notify`), six pages (`DashboardPage`, `InputPage`, `AnalysisPage`, `ReportsPage`, `SettingsPage`, `ContactsPage`), and flat primitives (`ReportSection`, `MetricRow`, `ListRow`, `FormField`, `FormCombo`, `AppButton`, `EmptyState`, `PageFrame`, `Glyph`). Navigation switches pages via `app.goTo(index)` + the `navRequested` signal. All font sizes come from `Theme.fs` — no hardcoded `pixelSize`.
+`Main.qml` (sidebar shell + `StackLayout` + a transient toast bound to `app.notify` — bottomMargin 78 so it clears the Settings save bar), six pages (`DashboardPage`, `InputPage`, `AnalysisPage`, `ReportsPage`, `SettingsPage`, `ContactsPage`), and flat primitives (`ReportSection` (+ optional trailing `note`), `MetricRow`, `ListRow`, `FormField` (password fields get a drawn eye visibility toggle), `FormCombo`, `AppButton`, `EmptyState`, `PageFrame` (+ optional sticky `footer` slot, zero-height when unset), `Glyph`). Navigation switches pages via `app.goTo(index)` + the `navRequested` signal. All font sizes come from `Theme.fs` — no hardcoded `pixelSize`.
+
+### `api/` — Qt-free web backend (FastAPI)
+
+`api/services.py::AppService` mirrors `AppController` without Qt (same state, guard flags, Arabic notify strings, daemon-thread model) and broadcasts plain event dicts to subscribers; `api/app.py` exposes them as REST (`/api`, interactive docs at `/api/docs`) + one WebSocket (`/ws` — `state_snapshot` on connect, then every event, including `models_fetched` / `wa_qr` / `wa_status`). Beyond the controller's surface it also serves: exports listing/download (`/api/exports[/name]`, reports-dir confined), recipients, engine profiles (`/api/engine/profiles*`), async provider model listing (`/api/settings/models`), and the WhatsApp bridge start (`/api/whatsapp/link`). Local-only: `python -m api` binds 127.0.0.1:`$MARSAD_PORT` (default 8765). If `web/dist/index.html` exists it is mounted at `/`. Full contract: `api/README.md`.
+
+### `web/` — the web UI (React + TypeScript)
+
+**Status: canceled (2026-07).** The web-UI direction was dropped — the app is
+desktop-native (Qt/QML) with Arabic as a first-class citizen. The `web/` files are kept on
+disk for reference only; do not build on them. The `api/` backend remains supported as the
+headless/alternate interface.
+
+Vite + React + TypeScript (strict) + Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first `@theme` in `src/theme.css` — the `backend/theme.py` tokens ported verbatim, plus semantic aliases like `--color-red`/`--color-amber`/`--color-border`). Runtime deps are react/react-dom **only**: page switching is a state index (StackLayout semantics, landing = لوحة التحكم), live state is one reconnecting WebSocket in `src/lib/store.ts` (external store + `useSyncExternalStore`; selectors must return stable refs, composites use `useMemo`), REST in `src/lib/api.ts`. Pages/components port the QML 1:1 — same Arabic strings verbatim, RTL logical properties, JetBrains Mono + `dir="ltr"` islands for numbers/paths/emails, hairline rules instead of cards, status as dots/words. Build: `cd web && npm install && npm run build` → `web/dist` (served at `/` by the API); dev: `npm run dev` proxies `/api` + `/ws`.
 
 ## Configuration & data files
 
-- `settings.json` — backend/provider keys + `email_dept_map` / `whatsapp_groups`. **Gitignored** (holds real credentials); `settings.example.json` ships as the template.
+- `settings.json` — backend/provider keys + `email_dept_map` / `whatsapp_groups` + `engine_profiles` (named engine-config snapshots; switch via `switchEngineProfile` — the flat keys stay the live config, and "الافتراضي" default is Ollama). **Gitignored** (holds real credentials); `settings.example.json` ships as the template.
 - `data/contacts.json` — org structure + employees (authoritative; gitignored). Contacts entered in the app sync email/WhatsApp → department routing back into `settings.json` via the **مزامنة مع الإعدادات** button.
 - `reports/latest.json` — most recent analysis, loaded on startup to repopulate the dashboard. `reports/`, `logs/`, `uploads/` are gitignored runtime output.
 - `sample_reports.json` — demo input loaded via «تحميل نماذج».
@@ -100,6 +125,7 @@ packaging/             linux/build_deb.sh + marsad.desktop · windows/marsad.nsi
 - **No Unicode symbol glyphs in the UI** — the bundled fonts contain none (they render as tofu or random fallbacks on minimal systems). Use `Glyph.qml` shapes for markers/icons.
 - `core/` must stay UI-agnostic (no Qt imports).
 - Network calls must degrade gracefully (return `{"error": …}`, never raise) — the UI and dashboard must survive any backend being offline.
+- **User-facing error text comes from `core/errors.py::friendly_error()`** — raw HTTP bodies / exception strings are classified into short actionable Arabic before reaching QML or the API; log the raw detail to `logs/` instead. Test results go to their dedicated signals (`connectionTested`/`emailTested`) — never duplicate them via `notify` (the toast overlaps the inline message).
 
 ## Testing instructions
 

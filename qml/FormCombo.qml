@@ -24,7 +24,7 @@ ColumnLayout {
         Layout.fillWidth: true
         model: field.options
         implicitHeight: 40
-        onActivated: field.activated(index)
+        onActivated: function(index) { field.activated(index) }
 
         contentItem: Text {
             text: box.displayText

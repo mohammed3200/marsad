@@ -8,204 +8,254 @@ root package __init__ so the old root package can be removed. Both read the same
 import os, datetime
 
 def export_pdf(results: dict, output_path: str) -> str:
+    """Branded Arabic PDF — Light Executive Report identity (white paper,
+    hairlines, one teal accent, status as colored words/dots).
+
+    reportlab ships no Arabic glyphs and no shaping: we register the bundled
+    Noto fonts and run Arabic through arabic_reshaper + python-bidi (`ar()`).
+    """
+    from xml.sax.saxutils import escape as _esc
+
     from reportlab.lib.pagesizes   import A4
     from reportlab.lib             import colors
     from reportlab.lib.units       import cm
-    from reportlab.platypus        import (
-        SimpleDocTemplate, Paragraph, Spacer, Table,
-        TableStyle, HRFlowable, PageBreak
-    )
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.enums  import TA_CENTER, TA_RIGHT
+    from reportlab.platypus        import (SimpleDocTemplate, Paragraph, Spacer,
+                                           Table, TableStyle, HRFlowable)
+    from reportlab.lib.styles      import ParagraphStyle
+    from reportlab.lib.enums       import TA_RIGHT, TA_CENTER, TA_LEFT
+    from reportlab.pdfbase         import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.graphics.shapes import Drawing, Circle
+
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+
+    from .paths import bundle_path
 
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    doc = SimpleDocTemplate(output_path, pagesize=A4,
-        rightMargin=1.5*cm, leftMargin=1.5*cm,
-        topMargin=1.5*cm, bottomMargin=1.5*cm)
 
-    DARK  = colors.HexColor("#0D1B2A")
-    BLUE  = colors.HexColor("#1E3A5F")
-    ACC   = colors.HexColor("#2563EB")
-    GREEN = colors.HexColor("#065F46")
-    RED   = colors.HexColor("#7F1D1D")
-    WHITE = colors.white
-    GRAY  = colors.HexColor("#F1F5F9")
-    GLT   = colors.HexColor("#D1FAE5")
-    RLT   = colors.HexColor("#FEE2E2")
-    YLT   = colors.HexColor("#FEF3C7")
-    BORD  = colors.HexColor("#CBD5E1")
-    thin  = {"style": "GRID","colorName": "#CBD5E1","width": 0.5}
+    # ── bundled fonts (the base-14 fonts have no Arabic at all; Noto Kufi is
+    #    intentionally unused — reportlab renders nothing from its TTFs) ──
+    for name, fn in (("Naskh",      "NotoSansArabic-Regular.ttf"),
+                     ("Naskh-Bold", "NotoSansArabic-Bold.ttf"),
+                     ("Mono",       "JetBrainsMono-Regular.ttf")):
+        pdfmetrics.registerFont(TTFont(name, str(bundle_path("assets", "fonts", fn))))
 
-    def S(name, size=10, bold=False, color=colors.HexColor("#1E293B"),
-          align=TA_RIGHT, leading=15):
-        return ParagraphStyle(name, fontSize=size, textColor=color,
-            fontName="Helvetica-Bold" if bold else "Helvetica",
-            alignment=align, leading=leading, spaceAfter=3)
+    def _has_ar(s):
+        return any("؀" <= ch <= "ۿ" for ch in s)
 
-    def sec_hdr(title, bg=ACC):
-        return Table([[Paragraph(title, S("sh",13,True,WHITE,TA_CENTER))]],
-            colWidths=[17.5*cm],
-            style=TableStyle([("BACKGROUND",(0,0),(-1,-1),bg),
-                              ("TOPPADDING",(0,0),(-1,-1),9),
-                              ("BOTTOMPADDING",(0,0),(-1,-1),9)]))
+    def ar(text):
+        """Arabic-ready string for a reportlab Paragraph: escape → reshape → bidi.
 
-    chief  = results.get("chief",{})
-    risk   = results.get("risk",{})
-    sched  = results.get("schedule",{})
-    fin    = results.get("cost",{})
-    qual   = results.get("quality",{})
-    health = chief.get("overall_health","غير محدد")
-    hbg    = GREEN if health=="جيد" else colors.HexColor("#78350F") if health=="متوسط" else RED
+        En/em dashes become hyphen-minus first: U+2013/2014 break the BiDi
+        number run (renders "8060" out of "60–80%"), while ES separators
+        (-, /, .) keep digits as one LTR run."""
+        s = _esc(str(text if text is not None else ""))
+        s = s.replace("–", "-").replace("—", "-")
+        return get_display(arabic_reshaper.reshape(s)) if _has_ar(s) else s
+
+    # ── identity tokens (backend/theme.py) ──
+    INK   = colors.HexColor("#141A22")
+    INK2  = colors.HexColor("#5A6675")
+    INK3  = colors.HexColor("#8A94A1")
+    ACC   = colors.HexColor("#0E6E60")
+    LINE  = colors.HexColor("#E4E8EC")
+    LINEH = colors.HexColor("#CFD6DD")
+    GOOD  = colors.HexColor("#1E7A52")
+    WARN  = colors.HexColor("#946200")
+    BAD   = colors.HexColor("#B4232A")
+
+    def status_color(lit):
+        return {"جيد": GOOD, "آمن": GOOD, "منخفضة": GOOD, "مكتمل": GOOD,
+                "متوسط": WARN, "تحذير": WARN, "متوسطة": WARN, "في الموعد": WARN,
+                "حرج": BAD, "خطر": BAD, "عالية": BAD, "متأخر": BAD}.get(lit, INK2)
+
+    CONTENT_W = 17 * cm
+
+    def PS(name, font="Naskh", size=10, color=INK, align=TA_RIGHT, leading=None, **kw):
+        return ParagraphStyle(name, fontName=font, fontSize=size, textColor=color,
+                              alignment=align, leading=leading or size * 1.6, **kw)
+
+    def val(text, align=TA_CENTER, color=INK, size=10, bold=False):
+        """Value cell — JetBrains Mono for Latin/numbers (has ↑↓→), Naskh for Arabic."""
+        s = str(text if text is not None else "")
+        font = ("Naskh-Bold" if bold else "Naskh") if _has_ar(s) else "Mono"
+        return Paragraph(ar(s), PS(f"v{font}{size}", font, size, color, align))
+
+    def dot(color, d=0.22 * cm):
+        dr = Drawing(d, d)
+        dr.add(Circle(d / 2, d / 2, d / 2, fillColor=color, strokeColor=None))
+        return dr
+
+    def section(title):
+        """Bold section title with a short accent rule directly under it (right)."""
+        return [Spacer(1, 10),
+                Paragraph(ar(title), PS("sec", "Naskh-Bold", 13, INK)),
+                HRFlowable(width=2.2 * cm, thickness=2, color=ACC, hAlign="RIGHT")]
+
+    def rows_style(n, header=False):
+        cmds = [("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2)]
+        if header:
+            cmds.append(("LINEBELOW", (0, 0), (-1, 0), 0.7, LINEH))
+        for i in range(1 if header else 0, n):
+            cmds.append(("LINEBELOW", (0, i), (-1, i), 0.4, LINE))
+        return cmds
+
+    AR_D = "٠١٢٣٤٥٦٧٨٩"
+    def arabic_num(n):
+        return "".join(AR_D[int(d)] if d.isdigit() else d for d in str(n))
+
+    chief = results.get("chief", {})
+    risk  = results.get("risk", {})
+    sched = results.get("schedule", {})
+    fin   = results.get("cost", {})
+    health = chief.get("overall_health", "غير محدد")
 
     story = []
 
-    # غلاف
-    story.append(Table(
-        [[Paragraph("نظام إدارة المشاريع الذكي — LTT 4G/5G",S("t",17,True,WHITE,TA_CENTER,22))],
-         [Paragraph(f"تاريخ: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    S("d",10,False,colors.HexColor("#94A3B8"),TA_CENTER))]],
-        colWidths=[17.5*cm],
-        style=TableStyle([("BACKGROUND",(0,0),(-1,-1),DARK),
-                          ("TOPPADDING",(0,0),(-1,-1),12),
-                          ("BOTTOMPADDING",(0,0),(-1,-1),12)])))
-    story.append(Spacer(1,.3*cm))
-    story.append(Table([[Paragraph(f"الحالة العامة: {health}",S("h",14,True,WHITE,TA_CENTER,18))]],
-        colWidths=[17.5*cm],
-        style=TableStyle([("BACKGROUND",(0,0),(-1,-1),hbg),
-                          ("TOPPADDING",(0,0),(-1,-1),8),
-                          ("BOTTOMPADDING",(0,0),(-1,-1),8)])))
-    story.append(Spacer(1,.4*cm))
+    # ── title block ──
+    story.append(Table([[
+        Paragraph(ar("تقرير حالة المشروع"), PS("t", "Naskh-Bold", 20, INK)),
+        Paragraph(datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                  PS("dt", "Mono", 9, INK3, TA_LEFT))]],
+        colWidths=[CONTENT_W - 4 * cm, 4 * cm],
+        style=TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                          ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                          ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
+    story.append(Paragraph(ar("مرصد — ذكاء المشاريع · LTT 4G/5G"), PS("br", "Naskh", 9, INK3)))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=2, color=ACC))
 
-    # ملخص
+    # ── health line ──
+    story.append(Spacer(1, 12))
+    story.append(Table([[
+        Paragraph(ar("الحالة العامة"), PS("hl", "Naskh", 11, INK2)),
+        dot(status_color(health)),
+        Paragraph(ar(health), PS("hw", "Naskh-Bold", 13, status_color(health)))]],
+        colWidths=[3.2 * cm, 0.5 * cm, CONTENT_W - 3.7 * cm],
+        style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                          ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                          ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
+
+    # ── executive summary ──
     if chief.get("executive_summary"):
-        story.append(sec_hdr("الملخص التنفيذي"))
-        story.append(Spacer(1,.2*cm))
-        story.append(Table([[Paragraph(chief["executive_summary"],S("b",10,leading=17))]],
-            colWidths=[17.5*cm],
-            style=TableStyle([("BACKGROUND",(0,0),(-1,-1),GRAY),
-                              ("TOPPADDING",(0,0),(-1,-1),10),
-                              ("BOTTOMPADDING",(0,0),(-1,-1),10),
-                              ("LEFTPADDING",(0,0),(-1,-1),12),
-                              ("BOX",(0,0),(-1,-1),1,BLUE)])))
-        story.append(Spacer(1,.4*cm))
+        story.extend(section("الملخص التنفيذي"))
+        story.append(Spacer(1, 6))
+        story.append(Table([[Paragraph(ar(chief["executive_summary"]),
+                                       PS("sum", "Naskh", 11, INK, leading=18)), ""]],
+            colWidths=[CONTENT_W - 0.35 * cm, 0.35 * cm],
+            style=TableStyle([("BACKGROUND", (1, 0), (1, 0), ACC),
+                              ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("TOPPADDING", (0, 0), (0, -1), 4),
+                              ("BOTTOMPADDING", (0, 0), (0, -1), 4),
+                              ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                              ("RIGHTPADDING", (0, 0), (0, -1), 8)])))
 
-    # KPIs
-    if chief.get("kpis"):
-        story.append(sec_hdr("مؤشرات الأداء الرئيسية (KPIs)"))
-        story.append(Spacer(1,.2*cm))
-        kpi_data=[[Paragraph(h,S("kh",10,True,WHITE,TA_CENTER))
-                   for h in ["المؤشر","القيمة","الاتجاه","الحالة"]]]
-        for k in chief["kpis"]:
-            s=k.get("status","")
-            kpi_data.append([Paragraph(k.get("name",""),S("n")),
-                             Paragraph(str(k.get("value","")),S("v",align=TA_CENTER)),
-                             Paragraph(str(k.get("trend","")),S("tr",align=TA_CENTER)),
-                             Paragraph(s,S("st",align=TA_CENTER))])
-        t=Table(kpi_data,colWidths=[7*cm,4*cm,2.5*cm,4*cm])
-        ts=[("BACKGROUND",(0,0),(-1,0),BLUE),("TEXTCOLOR",(0,0),(-1,0),WHITE),
-            ("GRID",(0,0),(-1,-1),.5,BORD),("TOPPADDING",(0,0),(-1,-1),7),
-            ("BOTTOMPADDING",(0,0),(-1,-1),7)]
-        for i,k in enumerate(chief["kpis"],1):
-            s=k.get("status","")
-            bg=GLT if s=="جيد" else YLT if s=="تحذير" else RLT
-            ts.append(("BACKGROUND",(3,i),(3,i),bg))
-        t.setStyle(TableStyle(ts))
-        story.append(t)
-        story.append(Spacer(1,.4*cm))
+    # ── KPIs ──
+    kpis = chief.get("kpis") or []
+    if kpis:
+        story.extend(section("المؤشرات الرئيسية"))
+        story.append(Spacer(1, 4))
+        data = [[Paragraph(ar(h), PS("th", "Naskh-Bold", 9, INK2, TA_CENTER))
+                 for h in ["المؤشر", "القيمة", "الاتجاه", "الحالة"]]]
+        for k in kpis:
+            s = k.get("status", "")
+            data.append([Paragraph(ar(k.get("name", "")), PS("kn", "Naskh", 10, INK)),
+                         val(k.get("value", "")),
+                         val(k.get("trend", ""), color=INK2),
+                         val(s, color=status_color(s), bold=True)])
+        story.append(Table(data, colWidths=[8 * cm, 3.5 * cm, 2 * cm, 3.5 * cm],
+                           style=TableStyle(rows_style(len(data), header=True))))
 
-    # المخاطر
-    risks=risk.get("risks",[])
-    if risks:
-        story.append(sec_hdr("سجل المخاطر",RED))
-        story.append(Spacer(1,.2*cm))
-        rdata=[[Paragraph(h,S("rh",10,True,WHITE,TA_CENTER))
-                for h in ["المخاطرة","المستوى","الوصف","الحل"]]]
-        lc={"عالية":RLT,"متوسطة":YLT,"منخفضة":GLT}
-        for rk in risks:
-            rdata.append([Paragraph(rk.get("title",""),S("rt",9)),
-                          Paragraph(rk.get("level",""),S("rl",9,align=TA_CENTER)),
-                          Paragraph(rk.get("description",""),S("rd",8)),
-                          Paragraph(rk.get("solution",""),S("rs",8))])
-        rt=Table(rdata,colWidths=[4*cm,2.5*cm,5.5*cm,5.5*cm])
-        rts=[("BACKGROUND",(0,0),(-1,0),RED),("TEXTCOLOR",(0,0),(-1,0),WHITE),
-             ("GRID",(0,0),(-1,-1),.4,BORD),("TOPPADDING",(0,0),(-1,-1),6),
-             ("BOTTOMPADDING",(0,0),(-1,-1),6)]
-        for i,rk in enumerate(risks,1):
-            rts.append(("BACKGROUND",(1,i),(1,i),lc.get(rk.get("level",""),WHITE)))
-        rt.setStyle(TableStyle(rts))
-        story.append(rt)
-        story.append(Spacer(1,.4*cm))
-
-    story.append(PageBreak())
-
-    # الجدول الزمني
-    story.append(sec_hdr("الجدول الزمني"))
-    story.append(Spacer(1,.2*cm))
-    sdata=[
-        [Paragraph("التأخير (يوم)",S("sl",10,True)),Paragraph(str(sched.get("delay_days","-")),S("sv",align=TA_CENTER))],
-        [Paragraph("الإنهاء الأصلي",S("sl",10,True)),Paragraph(sched.get("original_end","-"),S("sv",align=TA_CENTER))],
-        [Paragraph("الإنهاء الجديد",S("sl",10,True)),Paragraph(sched.get("new_end","-"),S("sv",align=TA_CENTER))],
-    ]
-    story.append(Table(sdata,colWidths=[8*cm,9.5*cm],
-        style=TableStyle([("BACKGROUND",(0,0),(0,-1),GRAY),
-                          ("GRID",(0,0),(-1,-1),.5,BORD),
-                          ("TOPPADDING",(0,0),(-1,-1),8),
-                          ("BOTTOMPADDING",(0,0),(-1,-1),8),
-                          ("LEFTPADDING",(0,0),(-1,-1),10)])))
-    story.append(Spacer(1,.4*cm))
-
-    # المالية
-    story.append(sec_hdr("الوضع المالي",GREEN))
-    story.append(Spacer(1,.2*cm))
-    fdata=[
-        [Paragraph("الميزانية الإجمالية",S("fl",10,True)),Paragraph(fin.get("total_budget","-"),S("fv",align=TA_CENTER))],
-        [Paragraph("المُنفَق",S("fl",10,True)),Paragraph(fin.get("spent","-"),S("fv",align=TA_CENTER))],
-        [Paragraph("المتبقي",S("fl",10,True)),Paragraph(fin.get("remaining","-"),S("fv",align=TA_CENTER))],
-        [Paragraph("نسبة الإنفاق",S("fl",10,True)),Paragraph(f'{fin.get("spent_pct",0)}%',S("fv",align=TA_CENTER))],
-        [Paragraph("نسبة الانحراف",S("fl",10,True)),Paragraph(f'+{fin.get("deviation_pct",0)}%',S("fv",align=TA_CENTER))],
-    ]
-    story.append(Table(fdata,colWidths=[8*cm,9.5*cm],
-        style=TableStyle([("BACKGROUND",(0,0),(0,-1),GRAY),
-                          ("BACKGROUND",(1,4),(1,4),RLT),
-                          ("GRID",(0,0),(-1,-1),.5,BORD),
-                          ("TOPPADDING",(0,0),(-1,-1),8),
-                          ("BOTTOMPADDING",(0,0),(-1,-1),8),
-                          ("LEFTPADDING",(0,0),(-1,-1),10)])))
-    story.append(Spacer(1,.4*cm))
-
-    # خطة العمل
-    actions=chief.get("top_actions",[])
+    # ── top actions ──
+    actions = chief.get("top_actions") or []
     if actions:
-        story.append(sec_hdr("خطة العمل الفورية",BLUE))
-        story.append(Spacer(1,.2*cm))
-        adata=[[Paragraph(h,S("ah",10,True,WHITE,TA_CENTER))
-                for h in ["#","الإجراء","المسؤول","الموعد","التأثير"]]]
-        for act in actions:
-            adata.append([
-                Paragraph(str(act.get("priority","")),S("ap",bold=True,align=TA_CENTER)),
-                Paragraph(act.get("action",""),S("aa",9)),
-                Paragraph(act.get("owner",""),S("ao",9,align=TA_CENTER)),
-                Paragraph(act.get("deadline",""),S("ad",9,align=TA_CENTER)),
-                Paragraph(act.get("impact",""),S("ai",8)),
-            ])
-        at=Table(adata,colWidths=[1.5*cm,6*cm,3*cm,2.5*cm,4.5*cm])
-        at.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),BLUE),
-                                ("TEXTCOLOR",(0,0),(-1,0),WHITE),
-                                ("GRID",(0,0),(-1,-1),.5,BORD),
-                                ("TOPPADDING",(0,0),(-1,-1),7),
-                                ("BOTTOMPADDING",(0,0),(-1,-1),7),
-                                ("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
-        story.append(at)
+        story.extend(section("خطة العمل الفورية"))
+        story.append(Spacer(1, 4))
+        for i, act in enumerate(actions, 1):
+            meta = "  ·  ".join(p for p in (act.get("owner", ""), act.get("deadline", ""),
+                                            act.get("impact", "")) if p)
+            row = Table([[Paragraph(ar(act.get("action", "")), PS("aa", "Naskh-Bold", 10, INK))],
+                         [Paragraph(ar(meta), PS("am", "Naskh", 8.5, INK2))]],
+                colWidths=[CONTENT_W],
+                style=TableStyle([("LINEBELOW", (0, -1), (-1, -1), 0.4, LINE),
+                                  ("TOPPADDING", (0, 0), (-1, 0), 8),
+                                  ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                  ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+            story.append(Table([[row, Paragraph(ar(arabic_num(act.get("priority", i))),
+                                                PS("an", "Naskh-Bold", 11, ACC))]],
+                colWidths=[CONTENT_W - 1.2 * cm, 1.2 * cm],
+                style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                  ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
 
-    # Footer
-    story.append(Spacer(1,.8*cm))
-    story.append(HRFlowable(width="100%",thickness=1,color=BLUE))
-    story.append(Spacer(1,.2*cm))
-    story.append(Paragraph(
-        f"LTT PM Intelligence Desktop | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | سري",
-        S("ft",8,False,colors.HexColor("#94A3B8"),TA_CENTER)))
+    # ── risk register ──
+    risks = risk.get("risks") or []
+    if risks:
+        story.extend(section("سجل المخاطر"))
+        story.append(Spacer(1, 4))
+        data = [[Paragraph(ar(h), PS("rh", "Naskh-Bold", 9, INK2, TA_CENTER))
+                 for h in ["المخاطرة", "المستوى", "الوصف", "الحل"]]]
+        for rk in risks:
+            lv = rk.get("level", "")
+            data.append([Paragraph(ar(rk.get("title", "")), PS("rt", "Naskh-Bold", 9, INK)),
+                         val(lv, color=status_color(lv), size=9, bold=True),
+                         Paragraph(ar(rk.get("description", "")), PS("rd", "Naskh", 8.5, INK2)),
+                         Paragraph(ar(rk.get("solution", "")), PS("rs", "Naskh", 8.5, INK2))])
+        story.append(Table(data, colWidths=[4.5 * cm, 2.5 * cm, 5 * cm, 5 * cm],
+                           style=TableStyle(rows_style(len(data), header=True) +
+                                            [("VALIGN", (0, 0), (-1, -1), "TOP")])))
 
-    doc.build(story)
+    # ── schedule ──
+    story.extend(section("الجدول الزمني"))
+    story.append(Spacer(1, 4))
+    sdata = [[Paragraph(ar(lbl), PS("sl", "Naskh", 10, INK2)), val(v)]
+             for lbl, v in (("التأخير (يوم)", sched.get("delay_days", "-")),
+                            ("الإنهاء الأصلي", sched.get("original_end", "-")),
+                            ("الإنهاء الجديد", sched.get("new_end", "-")))]
+    story.append(Table(sdata, colWidths=[10 * cm, 7 * cm],
+                       style=TableStyle(rows_style(len(sdata)))))
+
+    # ── finance ──
+    story.extend(section("الوضع المالي"))
+    story.append(Spacer(1, 4))
+    try:
+        dev = float(fin.get("deviation_pct", 0) or 0)
+    except (TypeError, ValueError):
+        dev = 0.0
+    fdata = [[Paragraph(ar(lbl), PS("fl", "Naskh", 10, INK2)), val(v)]
+             for lbl, v in (("الميزانية الإجمالية", fin.get("total_budget", "-")),
+                            ("المُنفَق", fin.get("spent", "-")),
+                            ("المتبقي", fin.get("remaining", "-")),
+                            ("نسبة الإنفاق", f'{fin.get("spent_pct", 0)}%'))]
+    fdata.append([Paragraph(ar("نسبة الانحراف"), PS("fld", "Naskh", 10, INK2)),
+                  val(f'+{dev:g}%', color=BAD if dev else INK)])
+    story.append(Table(fdata, colWidths=[10 * cm, 7 * cm],
+                       style=TableStyle(rows_style(len(fdata)))))
+
+    # ── page footer (drawn on every page, never stranded) ──
+    def _footer(canv, _doc):
+        canv.saveState()
+        y = 1.2 * cm
+        canv.setStrokeColor(LINE)
+        canv.setLineWidth(1)
+        canv.line(2 * cm, y, A4[0] - 2 * cm, y)
+        canv.setFont("Naskh", 8)
+        canv.setFillColor(INK3)
+        canv.drawCentredString(A4[0] / 2, y - 0.45 * cm,
+            ar(f'مرصد — LTT PMO · {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} · سري'))
+        canv.restoreState()
+
+    doc = SimpleDocTemplate(output_path, pagesize=A4,
+        rightMargin=2 * cm, leftMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+        title="مرصد — تقرير حالة المشروع", author="marsad")
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return output_path
 
 

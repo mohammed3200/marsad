@@ -10,6 +10,7 @@ import json
 import datetime
 
 from .paths import DATA_DIR
+from .errors import friendly_error
 
 BASE_DIR = DATA_DIR
 REPORTS  = DATA_DIR / "reports"
@@ -58,11 +59,91 @@ class AIEngine:
                 body = e.read().decode("utf-8", "ignore")[:300]
             except Exception:
                 body = ""
-            return {"error": f"HTTP {e.code}: {body or e.reason}"}
+            # جسم الرد الخام (JSON إنجليزي) لا يصل الواجهة — رسالة عربية موجزة
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}")}
         except urllib.error.URLError as e:
-            return {"error": f"تعذّر الاتصال: {e.reason}"}
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+            # السبب الخام (gaierror/Errno…) يمرّ عبر المترجم — لا يصل الواجهة خاماً
+            return {"error": friendly_error(str(e.reason))}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
         except Exception as e:
             return {"error": str(e)}
+
+    @staticmethod
+    def _http_get_json(url: str, headers: dict, timeout: int) -> dict:
+        """GET JSON، أعِد رداً مُفكَّكاً أو {"error":…}. لا يرفع استثناء أبداً."""
+        import urllib.request, urllib.error
+        bad = AIEngine._bad_scheme(url)
+        if bad is not None:
+            return bad
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return {"_ok": json.loads(resp.read())}
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                body = ""
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}")}
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+            return {"error": friendly_error(str(e.reason))}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def list_models(self) -> tuple:
+        """قائمة النماذج المتاحة من المزوّد المُختار — (ok, models | رسالة)."""
+        backend = self.settings.get("ai_backend", "ollama")
+        if backend == "ollama":
+            url = (self.settings.get("ollama_url")
+                   or "http://localhost:11434").rstrip("/")
+            res = self._http_get_json(f"{url}/api/tags", {}, 10)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(m.get("name", "")
+                            for m in res["_ok"].get("models", []))
+            models = [m for m in models if m]
+            return (True, models) if models else (
+                False, "لا توجد نماذج — نزّل نموذجاً أولاً (ollama pull)")
+        if backend == "openai":
+            api_key = self.settings.get("openai_api_key", "")
+            if not api_key:
+                return False, "لم يُضبَط مفتاح OpenAI في الإعدادات"
+            base = (self.settings.get("openai_base_url")
+                    or "https://api.openai.com/v1").rstrip("/")
+            res = self._http_get_json(f"{base}/models",
+                                      {"Authorization": f"Bearer {api_key}"}, 15)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(m.get("id", "") for m in res["_ok"].get("data", []))
+            models = [m for m in models if m]
+            return (True, models) if models else (False, "رد غير متوقع من الخدمة")
+        if backend == "gemini":
+            api_key = self.settings.get("gemini_api_key", "")
+            if not api_key:
+                return False, "لم يُضبَط مفتاح Gemini في الإعدادات"
+            res = self._http_get_json(
+                "https://generativelanguage.googleapis.com/v1beta/models"
+                f"?key={api_key}", {}, 15)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(
+                m.get("name", "").replace("models/", "")
+                for m in res["_ok"].get("models", [])
+                if "generateContent" in (m.get("supportedGenerationMethods") or []))
+            models = [m for m in models if m]
+            return (True, models) if models else (False, "رد غير متوقع من الخدمة")
+        if backend == "claude":
+            # لا توجد واجهة قائمة — قائمة ثابتة من الإصدارات المعروفة
+            return True, ["claude-opus-4-5", "claude-sonnet-4-5",
+                          "claude-haiku-4-5"]
+        return False, "أدخل اسم النشر (Deployment) يدوياً"
 
     def _timeout(self) -> int:
         try:
@@ -111,7 +192,11 @@ class AIEngine:
                 data = json.loads(resp.read())
                 return self._parse_json(data.get("response", ""))
         except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
             return {"error": f"تعذر الاتصال بـ Ollama: {e.reason}\nتأكد من تشغيل Ollama أولاً"}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
         except Exception as e:
             return {"error": str(e)}
 

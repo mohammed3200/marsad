@@ -43,6 +43,8 @@ _DEFAULTS = {
     "whatsapp_token":   "",
     "email_dept_map":   {},
     "whatsapp_groups":  {},
+    # engine profiles — ملفات محرّك محفوظة قابلة للتبديل (الافتراضي Ollama)
+    "engine_profiles":  [],
 }
 
 

@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 PageFrame {
     id: pg
     title: "الإعدادات"
-    subtitle: "اضبط محرّك الذكاء الاصطناعي ومصادر البيانات — كل شيء من هنا، بدون تعديل ملفات"
+    subtitle: "اضبط محرّك الذكاء الاصطناعي ومصادر البيانات ثم احفظ — زرّا الاختبار يحفظان تلقائياً قبل الفحص"
 
     property string testMsg: ""
     property int testState: 0
@@ -17,6 +17,123 @@ PageFrame {
     function backendIndex(id) { var i = backendIds.indexOf(id); return i < 0 ? 0 : i }
     function resetEngineTest() { pg.testState = 0; pg.testMsg = "" }
     function resetEmailTest()  { pg.emailState = 0; pg.emailMsg = "" }
+
+    // يجمع قيم النموذج الظاهرة — يستخدمها «حفظ الإعدادات» وزرّا الاختبار حتى
+    // يُختبَر ما يراه المستخدم فعلاً، لا الإعدادات المحفوظة القديمة.
+    function collectSettings() {
+        return {
+            "ai_backend":        pg.backendIds[backendC.currentIndex],
+            "ai_timeout":        parseInt(aiTimeout.text) || 180,
+            "ollama_url":        ollamaUrl.text,
+            "ollama_model":      ollamaModel.text,
+            "claude_api_key":    claudeKey.text,
+            "claude_model":      claudeModel.text,
+            "openai_base_url":   openaiBase.text,
+            "openai_api_key":    openaiKey.text,
+            "openai_model":      openaiModel.text,
+            "gemini_api_key":    geminiKey.text,
+            "gemini_model":      geminiModel.text,
+            "azure_endpoint":    azureEndpoint.text,
+            "azure_deployment":  azureDeploy.text,
+            "azure_api_key":     azureKey.text,
+            "azure_api_version": azureVersion.text,
+            "email_user":        emailUser.text,
+            "email_password":    emailPass.text,
+            "imap_host":         imapHost.text,
+            "smtp_host":         smtpHost.text,
+            "smtp_port":         parseInt(smtpPort.text) || 587,
+            "report_recipients": recipients.text.split(",").map(function(s){ return s.trim() }).filter(function(s){ return s.length > 0 }),
+            "erp_folder":        erpFolder.text,
+            "whatsapp_enabled":  waEnabled.checked,
+            "whatsapp_port":     parseInt(waPort.text) || 5051
+        }
+    }
+
+    function doSave() {
+        app.saveSettings(pg.collectSettings())
+        pg.resetEngineTest(); pg.resetEmailTest()
+    }
+
+    // اكتب النموذج المختار في حقل المزوّد الظاهر حالياً
+    function setCurrentModel(m) {
+        var b = backendC.currentIndex
+        if (b === 0)      ollamaModel.text = m
+        else if (b === 1) claudeModel.text = m
+        else if (b === 2) openaiModel.text = m
+        else if (b === 3) geminiModel.text = m
+        else              azureDeploy.text = m
+    }
+
+    // أعد تعبئة الحقول من الإعدادات — يُستدعى بعد تبديل ملف المحرّك فقط
+    // (لا يُربط بـ settingsChanged حتى لا تُمسح تعديلات غير محفوظة عند المزامنة)
+    function reloadFields() {
+        var s = app.settings
+        backendC.currentIndex = pg.backendIndex(s.ai_backend)
+        aiTimeout.text   = (s.ai_timeout || 180).toString()
+        ollamaUrl.text   = s.ollama_url || ""
+        ollamaModel.text = s.ollama_model || ""
+        claudeKey.text   = s.claude_api_key || ""
+        claudeModel.text = s.claude_model || ""
+        openaiBase.text  = s.openai_base_url || ""
+        openaiKey.text   = s.openai_api_key || ""
+        openaiModel.text = s.openai_model || ""
+        geminiKey.text   = s.gemini_api_key || ""
+        geminiModel.text = s.gemini_model || ""
+        azureEndpoint.text = s.azure_endpoint || ""
+        azureDeploy.text = s.azure_deployment || ""
+        azureKey.text    = s.azure_api_key || ""
+        azureVersion.text = s.azure_api_version || ""
+        emailUser.text   = s.email_user || ""
+        emailPass.text   = s.email_password || ""
+        imapHost.text    = s.imap_host || ""
+        smtpHost.text    = s.smtp_host || ""
+        smtpPort.text    = (s.smtp_port || 587).toString()
+        recipients.text  = (s.report_recipients || []).join(", ")
+        erpFolder.text   = s.erp_folder || ""
+        waEnabled.checked = s.whatsapp_enabled === true
+        waPort.text      = (s.whatsapp_port || 5051).toString()
+    }
+
+    // حالة الحفظ الحيّة — تقارن كل حقل ظاهر بالإعدادات المحفوظة
+    readonly property bool dirty: computeDirty()
+    function computeDirty() {
+        var s = app.settings, c = pg.collectSettings()
+        for (var k in c) {
+            var a = s[k], b = c[k]
+            if (typeof b === "boolean") { if ((a === true) !== b) return true }
+            else if (typeof b === "number") { if ((parseFloat(a) || 0) !== b) return true }
+            else if (Array.isArray(b))   { if ((a || []).join(",") !== b.join(",")) return true }
+            else { if ((a === undefined || a === null ? "" : String(a)) !== String(b)) return true }
+        }
+        return false
+    }
+
+    // جاهزية كل قسم من الإعدادات المحفوظة (وليست قيم الحقول المؤقتة)
+    function engineNote() {
+        var b = pg.backendIds[backendC.currentIndex]
+        if (b === "ollama") return "محلي — بلا مفتاح"
+        var key = { "claude": "claude_api_key", "openai": "openai_api_key",
+                    "gemini": "gemini_api_key", "azure": "azure_api_key" }[b]
+        return (app.settings[key] || "") !== "" ? "المفتاح مضبوط" : "المفتاح غير مضبوط"
+    }
+    function engineWarn() {
+        var b = pg.backendIds[backendC.currentIndex]
+        if (b === "ollama") return false
+        var key = { "claude": "claude_api_key", "openai": "openai_api_key",
+                    "gemini": "gemini_api_key", "azure": "azure_api_key" }[b]
+        return (app.settings[key] || "") === ""
+    }
+    function emailNote() {
+        var u = app.settings.email_user || "", p = app.settings.email_password || ""
+        if (u && p) return "مكتمل"
+        var missing = []
+        if (!u) missing.push("البريد")
+        if (!p) missing.push("كلمة المرور")
+        return "ينقصه: " + missing.join("، ")
+    }
+    function emailWarn() {
+        return !((app.settings.email_user || "") && (app.settings.email_password || ""))
+    }
 
     // OpenAI-compatible provider presets (base_url, model)
     readonly property var oaPresets: [
@@ -36,7 +153,37 @@ PageFrame {
     }
 
     // ═══════════ AI engine ═══════════
-    ReportSection { title: "محرّك الذكاء الاصطناعي" }
+    ReportSection { title: "محرّك الذكاء الاصطناعي"; note: pg.engineNote(); noteColor: pg.engineWarn() ? Theme.colors.amber : Theme.colors.ink3 }
+
+    // ملفات المحرّك — احفظ الإعداد الحالي كملف وبدّل بين الملفات لاحقاً
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 10
+        FormCombo {
+            id: profileC
+            label: "ملف المحرّك"
+            Layout.fillWidth: true
+            options: ["الافتراضي (Ollama)"].concat(app.engineProfilesModel.map(function(p){ return p.name }))
+            onActivated: function(i) {
+                if (i > 0) { app.switchEngineProfile(options[i]); pg.reloadFields() }
+            }
+        }
+        AppButton {
+            text: "حذف الملف"; kind: "ghost"; Layout.alignment: Qt.AlignBottom
+            visible: profileC.currentIndex > 0
+            onClicked: { app.deleteEngineProfile(profileC.options[profileC.currentIndex]); profileC.currentIndex = 0 }
+        }
+    }
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 10
+        FormField { id: profileName; label: "احفظ الإعداد الحالي كملف"; placeholder: "مثال: Gemini العمل" }
+        AppButton {
+            text: "حفظ كملف"; kind: "ghost"; Layout.alignment: Qt.AlignBottom
+            onClicked: { app.saveSettings(pg.collectSettings()); app.saveEngineProfile(profileName.text); profileName.text = "" }
+        }
+    }
+
     FormCombo {
         id: backendC
         label: "المزوّد"
@@ -103,12 +250,30 @@ PageFrame {
         FormField { id: azureVersion;  label: "إصدار الواجهة (api-version)"; ltr: true; Component.onCompleted: text = app.settings.azure_api_version || "" }
     }
 
+    // جلب قائمة النماذج من المزوّد الحالي بدل كتابة الاسم يدوياً
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 10
+        AppButton {
+            text: app.modelsBusy ? "جارٍ الجلب…" : "جلب قائمة النماذج"; kind: "ghost"
+            enabled: !app.modelsBusy
+            onClicked: { app.saveSettings(pg.collectSettings()); app.fetchModels() }
+        }
+        FormCombo {
+            id: modelsC
+            Layout.fillWidth: true
+            visible: app.modelsModel.length > 0
+            options: app.modelsModel
+            onActivated: function(i) { pg.setCurrentModel(app.modelsModel[i]) }
+        }
+    }
+
     // engine test
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
         AppButton { text: "اختبار المحرّك"; kind: "ghost"; enabled: !app.testingEngine
-            onClicked: { pg.testState = 2; pg.testMsg = "جارٍ الفحص…"; app.testConnection() } }
+            onClicked: { app.saveSettings(pg.collectSettings()); pg.testState = 2; pg.testMsg = "جارٍ الفحص…"; app.testConnection() } }
         Rectangle {
             width: 8; height: 8; radius: 4
             visible: pg.testState !== 0
@@ -118,13 +283,15 @@ PageFrame {
         Text {
             text: pg.testMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
+            maximumLineCount: 2; elide: Text.ElideLeft
+            horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
         }
     }
 
     // ═══════════ Email ═══════════
-    ReportSection { title: "البريد الإلكتروني" }
+    ReportSection { title: "البريد الإلكتروني"; note: pg.emailNote(); noteColor: pg.emailWarn() ? Theme.colors.amber : Theme.colors.ink3 }
     FormField { id: emailUser; label: "البريد"; ltr: true; Component.onCompleted: text = app.settings.email_user || ""; onTextChanged: pg.resetEmailTest() }
     FormField { id: emailPass; label: "كلمة المرور / App Password"; ltr: true; password: true; Component.onCompleted: text = app.settings.email_password || ""; onTextChanged: pg.resetEmailTest() }
     RowLayout {
@@ -144,7 +311,7 @@ PageFrame {
         Layout.fillWidth: true
         spacing: 12
         AppButton { text: "اختبار البريد"; kind: "ghost"; enabled: !app.testingEmail
-            onClicked: { pg.emailState = 2; pg.emailMsg = "جارٍ الفحص…"; app.testEmail() } }
+            onClicked: { app.saveSettings(pg.collectSettings()); pg.emailState = 2; pg.emailMsg = "جارٍ الفحص…"; app.testEmail() } }
         Rectangle {
             width: 8; height: 8; radius: 4
             visible: pg.emailState !== 0
@@ -154,13 +321,15 @@ PageFrame {
         Text {
             text: pg.emailMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
+            maximumLineCount: 2; elide: Text.ElideLeft
+            horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
         }
     }
 
     // ═══════════ ERP folder ═══════════
-    ReportSection { title: "مجلد ERP" }
+    ReportSection { title: "مجلد ERP"; note: (app.settings.erp_folder || "") !== "" ? "مضبوط" : "غير مضبوط" }
     Text {
         text: "أي ملف (Excel / PDF / CSV / Word…) يوضع في هذا المجلد يُقرأ عند «جمع من المصادر»."
         Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -177,7 +346,7 @@ PageFrame {
     }
 
     // ═══════════ WhatsApp ═══════════
-    ReportSection { title: "واتساب" }
+    ReportSection { title: "واتساب"; note: app.settings.whatsapp_enabled === true ? "مفعّل" : "معطّل" }
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
@@ -193,56 +362,87 @@ PageFrame {
         Item { Layout.fillWidth: true }
         FormField { id: waPort; label: "منفذ المستقبِل"; ltr: true; intOnly: true; Layout.preferredWidth: 140; Component.onCompleted: text = (app.settings.whatsapp_port || 5051).toString() }
     }
-    Text {
-        text: "واتساب يحتاج جسر Node.js يعمل مرة واحدة: «توليد ملف الجسر»، ثم في مجلد البيانات "
-            + "شغّل npm install ثم node whatsapp_bridge.js وامسح رمز QR بهاتفك."
-        Layout.fillWidth: true; wrapMode: Text.WordWrap
-        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption; color: Theme.colors.ink3
-    }
-    RowLayout {
+
+    // إعداد الجسر تسلسل حقيقي — الترقيم هنا يحمل معلومة (الخطوات مرتّبة)
+    ColumnLayout {
         Layout.fillWidth: true
         spacing: 12
-        AppButton { text: "توليد ملف الجسر"; kind: "ghost"; onClicked: app.generateWhatsAppBridge() }
-        AppButton { text: "فحص Node.js"; kind: "ghost"; onClicked: app.checkNode() }
-        Item { Layout.fillWidth: true }
-    }
 
-    // ═══════════ save ═══════════
-    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.colors.border }
-    RowLayout {
-        Layout.fillWidth: true
-        Item { Layout.fillWidth: true }
-        AppButton {
-            text: "حفظ الإعدادات"; kind: "accent"
-            onClicked: {
-                app.saveSettings({
-                "ai_backend":        pg.backendIds[backendC.currentIndex],
-                "ai_timeout":        parseInt(aiTimeout.text) || 180,
-                "ollama_url":        ollamaUrl.text,
-                "ollama_model":      ollamaModel.text,
-                "claude_api_key":    claudeKey.text,
-                "claude_model":      claudeModel.text,
-                "openai_base_url":   openaiBase.text,
-                "openai_api_key":    openaiKey.text,
-                "openai_model":      openaiModel.text,
-                "gemini_api_key":    geminiKey.text,
-                "gemini_model":      geminiModel.text,
-                "azure_endpoint":    azureEndpoint.text,
-                "azure_deployment":  azureDeploy.text,
-                "azure_api_key":     azureKey.text,
-                "azure_api_version": azureVersion.text,
-                "email_user":        emailUser.text,
-                "email_password":    emailPass.text,
-                "imap_host":         imapHost.text,
-                "smtp_host":         smtpHost.text,
-                "smtp_port":         parseInt(smtpPort.text) || 587,
-                "report_recipients": recipients.text.split(",").map(function(s){ return s.trim() }).filter(function(s){ return s.length > 0 }),
-                "erp_folder":        erpFolder.text,
-                "whatsapp_enabled":  waEnabled.checked,
-                "whatsapp_port":     parseInt(waPort.text) || 5051
-                })
-                pg.resetEngineTest(); pg.resetEmailTest()
+        RowLayout {
+            Layout.fillWidth: true; spacing: 10
+            Text { text: "1"; font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3; Layout.preferredWidth: 16 }
+            Text { text: "تحقق من Node.js على هذا الجهاز"; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                   font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2 }
+            AppButton { text: "فحص Node.js"; kind: "ghost"; onClicked: app.checkNode() }
+            Rectangle {
+                width: 8; height: 8; radius: 4
+                visible: app.nodeStatus !== ""
+                color: app.nodeStatus === "missing" ? Theme.colors.red : Theme.colors.green
+                Layout.alignment: Qt.AlignVCenter
+            }
+            Text {
+                visible: app.nodeStatus !== ""
+                text: app.nodeStatus === "missing" ? "غير مثبّت" : "مثبّت: " + app.nodeStatus
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                color: Theme.colors.ink2
             }
         }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 10
+            Text { text: "2"; font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3; Layout.preferredWidth: 16 }
+            Text { text: "إن لم يكن مثبّتاً، ثبّته من الموقع الرسمي"; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                   font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2 }
+            AppButton {
+                text: "تثبيت Node.js"; kind: "ghost"
+                visible: app.nodeStatus === "missing"
+                onClicked: app.installNode()
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 10
+            Text { text: "3"; font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3; Layout.preferredWidth: 16 }
+            Text { text: "ولّد ملف الجسر في مجلد البيانات"; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                   font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2 }
+            AppButton { text: "توليد ملف الجسر"; kind: "ghost"; onClicked: app.generateWhatsAppBridge() }
+        }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 10
+            Text { text: "4"; font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small; color: Theme.colors.ink3; Layout.preferredWidth: 16 }
+            Text { text: "اعرض رمز الربط داخل التطبيق وامسحه بواتساب — يصلك تأكيد فور الربط"
+                   Layout.fillWidth: true; wrapMode: Text.WordWrap
+                   font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; color: Theme.colors.ink2 }
+            AppButton {
+                text: "عرض رمز الربط"; kind: "accent"
+                enabled: !app.waStarting
+                onClicked: app.showWhatsAppQr()
+            }
+        }
+        Text { text: "أو يدوياً من مجلد البيانات:  npm install && node whatsapp_bridge.js"
+               Layout.fillWidth: true; Layout.leftMargin: 26
+               font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.caption; color: Theme.colors.ink3
+               LayoutMirroring.enabled: false; horizontalAlignment: Text.AlignLeft }
+    }
+
+    // ═══════════ sticky save bar (PageFrame footer) ═══════════
+    footer: RowLayout {
+        width: Math.min(840, parent.width - 96)
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 12
+        AppButton {
+            text: "حفظ الإعدادات"; kind: "accent"
+            onClicked: pg.doSave()
+        }
+        Rectangle {
+            width: 8; height: 8; radius: 4
+            color: pg.dirty ? Theme.colors.amber : Theme.colors.green
+            Layout.alignment: Qt.AlignVCenter
+        }
+        Text {
+            text: pg.dirty ? "تغييرات غير محفوظة" : "كل الإعدادات محفوظة"
+            font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
+            color: Theme.colors.ink2
+        }
+        Item { Layout.fillWidth: true }
     }
 }

@@ -135,6 +135,43 @@ the NSIS installer + portable `.exe` (Windows) and the `.deb` (Linux) and attach
 An installed app keeps its config, reports, and contacts under a per-user data dir
 (`%APPDATA%/marsad`, `~/.local/share/marsad`).
 
+### Web API (Qt-free, optional)
+
+marsad also ships a FastAPI backend that exposes the same `AppController` semantics over REST + WebSocket.
+It binds **127.0.0.1 only** and reuses the same `core/`, `connectors.py`, and settings logic — no Qt is loaded.
+
+```bash
+python3 -m api                # 127.0.0.1:8765 (set MARSAD_PORT to override)
+# or
+python3 run_api.py
+```
+
+Interactive docs are at `http://127.0.0.1:8765/api/docs`. Key endpoints:
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/meta` | today label, backend, engine status |
+| `GET /api/settings` / `PUT /api/settings` | read / save settings |
+| `GET /api/reports` / `POST /api/reports` / `DELETE /api/reports` | input queue CRUD |
+| `POST /api/reports/samples` / `POST /api/reports/collect` | load demos or collect from sources |
+| `POST /api/analysis/run` | start the agent fleet |
+| `GET /api/dashboard` | latest chief output |
+| `POST /api/export/pdf` / `POST /api/export/excel` | download reports |
+| `GET /api/contacts/structure` / `GET /api/contacts/employees` | org chart |
+| `/ws` | live state snapshot + events |
+
+Build the API bundle separately:
+
+```bash
+pyinstaller marsad_api.spec   # → dist/marsad-api/
+```
+
+Verify the endpoints without a server:
+
+```bash
+python3 tools/test_api.py
+```
+
 ## Connect a backend
 
 Everything is configured from the **الإعدادات** (Settings) tab in the app — **no manual JSON editing**
