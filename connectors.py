@@ -53,6 +53,18 @@ log = logging.getLogger(__name__)
 # CERT_NONE with check_hostname disabled — i.e. no verification at all.
 SSL_CONTEXT = ssl.create_default_context()
 
+# Per-report content ceiling. Whatever a reader returns goes verbatim into an
+# agent prompt and out to a third-party API, so an uncapped reader is both a
+# memory and a cost problem. xlsx/csv/json cap themselves; the rest use _cap().
+MAX_CHARS = 40_000
+
+
+def _cap(text: str) -> str:
+    text = text or ""
+    if len(text) <= MAX_CHARS:
+        return text
+    return text[:MAX_CHARS] + "\n\n[اقتُطع النص — تجاوز الحد المسموح]"
+
 # ════════════════════════════════════════════════════
 # 1. موصّل البريد الإلكتروني
 # ════════════════════════════════════════════════════
@@ -219,8 +231,8 @@ class EmailConnector:
             if ct == "text/plain" and "attachment" not in disp:
                 try:
                     charset = part.get_content_charset() or "utf-8"
-                    body    = part.get_payload(decode=True).decode(
-                                  charset, errors="ignore")
+                    body    = _cap(part.get_payload(decode=True).decode(
+                                  charset, errors="ignore"))
                 except Exception:
                     pass
             elif ct == "application/pdf":
@@ -238,7 +250,7 @@ class EmailConnector:
         try:
             import PyPDF2, io
             reader = PyPDF2.PdfReader(io.BytesIO(data))
-            return "\n".join(p.extract_text() or "" for p in reader.pages)
+            return _cap("\n".join(p.extract_text() or "" for p in reader.pages))
         except Exception:
             return "[PDF — تعذّر استخراج النص]"
 
@@ -593,7 +605,7 @@ def _read_pdf(fpath: Path) -> str:
         import PyPDF2
         with open(fpath, "rb") as f:
             reader = PyPDF2.PdfReader(f)
-            return "\n".join(p.extract_text() or "" for p in reader.pages)
+            return _cap("\n".join(p.extract_text() or "" for p in reader.pages))
     except ImportError:
         return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
     except Exception as e:
@@ -604,7 +616,7 @@ def _read_docx(fpath: Path) -> str:
     try:
         import docx
         doc = docx.Document(str(fpath))
-        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        return _cap("\n".join(p.text for p in doc.paragraphs if p.text.strip()))
     except ImportError:
         return "[يحتاج مكتبة python-docx — pip install python-docx]"
     except Exception as e:
@@ -629,7 +641,7 @@ def read_file_to_report(fpath, source: str = "upload",
     elif ext == ".json":
         content = _read_json(fpath)
     elif ext == ".txt":
-        content = fpath.read_text(encoding="utf-8", errors="ignore")
+        content = _cap(fpath.read_text(encoding="utf-8", errors="ignore"))
     elif ext == ".pdf":
         content = _read_pdf(fpath)
     elif ext == ".docx":

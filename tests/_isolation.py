@@ -17,9 +17,19 @@ def isolated_state():
     # It must be imported *before* api.app's module-level `service = AppService()`
     # runs, or the patch below would have nothing to redirect.
     import api.services as svc
+    import core.paths as paths
 
     saved = (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS, contacts.CONTACTS_FILE,
-             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F)
+             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F, paths.DATA_DIR)
+
+    # api/app.py does `from core.paths import DATA_DIR` at import time and uses
+    # it to place uploads. Because this helper is entered *before* api.app is
+    # first imported, redirecting the name on core.paths is what makes api.app
+    # bind the temp path when it does import. Modules that already imported
+    # DATA_DIR keep their own binding, which is why each is patched by name
+    # above.
+    api_app = sys.modules.get("api.app")
+    api_app_saved = api_app.DATA_DIR if api_app else None
 
     # Also redirect backend.controller path globals if it's already imported
     ctrl = sys.modules.get("backend.controller")
@@ -37,6 +47,9 @@ def isolated_state():
         svc.REPORTS = root / "reports"
         svc.SAMPLES_F = root / "sample_reports.json"     # deliberately absent
         svc.LATEST_F = root / "reports" / "latest.json"
+        paths.DATA_DIR = root
+        if api_app:
+            api_app.DATA_DIR = root
 
         if ctrl:
             ctrl.REPORTS = root / "reports"
@@ -47,6 +60,8 @@ def isolated_state():
             yield root
         finally:
             (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS, contacts.CONTACTS_FILE,
-             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F) = saved
+             svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F, paths.DATA_DIR) = saved
+            if api_app_saved is not None:
+                api_app.DATA_DIR = api_app_saved
             if ctrl_saved:
                 ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F = ctrl_saved

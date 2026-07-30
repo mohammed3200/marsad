@@ -20,6 +20,7 @@ if os.environ.get("MARSAD_API_ENABLE") != "1":
 import asyncio
 import datetime
 import json
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -47,6 +48,25 @@ SECRET_KEYS = ("claude_api_key", "openai_api_key", "gemini_api_key",
 # PUT treatment as the top-level settings, or a saved profile's real provider
 # keys leak straight through GET /api/settings one level down.
 PROFILE_SECRET_KEYS = tuple(k for k in SECRET_KEYS if k in ENGINE_KEYS)
+
+# Upload bounds. Without these a single request could stream an unbounded file
+# into memory, and every byte of it ends up in an LLM prompt downstream.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # per file
+MAX_UPLOAD_FILES = 20                 # per request
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|]')
+
+
+def _safe_upload_name(raw: str) -> str:
+    """A filename that is safe to join onto the uploads directory.
+
+    Path(...).name already strips client-side directories, but leaves "." and
+    ".." intact — both name an existing directory, so opening them for write
+    raises IsADirectoryError and the endpoint 500s.
+    """
+    name = Path(raw or "").name
+    if name in ("", ".", ".."):
+        name = "upload"
+    return _UNSAFE_NAME.sub("_", name)[:120]
 
 
 def _profile_list(value) -> list:
@@ -285,14 +305,35 @@ def collect_reports():
 @app.post("/api/reports/files")
 async def upload_files(files: list[UploadFile] = File(...)):
     """Save uploads under DATA_DIR, then hand them to the async add-files path."""
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(413, f"عدد الملفات يتجاوز الحد ({MAX_UPLOAD_FILES})")
+    # %f: two uploads in the same second used to collide into one directory
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     dest_dir = DATA_DIR / "uploads" / f"api_{ts}"
     dest_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for f in files:
-        name = Path(f.filename or "file").name  # strip any client-side dirs
-        dest = dest_dir / name
-        dest.write_bytes(await f.read())
+        dest = dest_dir / _safe_upload_name(f.filename)
+        written = 0
+        try:
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = await f.read(1 << 20)   # stream, never whole-file
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            413,
+                            f"حجم الملف يتجاوز الحد ({MAX_UPLOAD_BYTES // (1024 * 1024)} ميغابايت)")
+                    out.write(chunk)
+        except HTTPException:
+            dest.unlink(missing_ok=True)   # no partial file left behind
+            raise
+        except OSError as e:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(
+                400, f"تعذّر حفظ الملف: {_safe_upload_name(f.filename)}") from e
         paths.append(str(dest))
     return {"started": service.add_files(paths), "saved": len(paths)}
 
