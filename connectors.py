@@ -65,6 +65,14 @@ def _cap(text: str) -> str:
         return text
     return text[:MAX_CHARS] + "\n\n[اقتُطع النص — تجاوز الحد المسموح]"
 
+
+# WhatsAppReceiver.do_POST reads Content-Length bytes into memory before
+# parsing JSON — a second local HTTP server with the same unbounded-body risk
+# the upload endpoint (api/app.py) had. A WhatsApp message body has no
+# business being megabytes; MAX_CHARS-scale, times 4 for UTF-8 (Arabic runs
+# ~2 bytes/char) and JSON structure/escaping overhead around the text field.
+MAX_WA_BODY_BYTES = MAX_CHARS * 4
+
 # ════════════════════════════════════════════════════
 # 1. موصّل البريد الإلكتروني
 # ════════════════════════════════════════════════════
@@ -463,7 +471,14 @@ class WhatsAppReceiver:
                     self.send_response(403); self.end_headers(); return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
-                    data   = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    self.send_response(400); self.end_headers(); return
+                if length < 0 or length > MAX_WA_BODY_BYTES:
+                    # Refuse before reading — do not pull an oversized body
+                    # into memory just to discard it.
+                    self.send_response(413); self.end_headers(); return
+                try:
+                    data = json.loads(self.rfile.read(length) or b"{}")
                 except Exception:
                     self.send_response(400); self.end_headers(); return
                 if path == "/wa_qr":
@@ -481,7 +496,7 @@ class WhatsAppReceiver:
                         "dept"   : recv.dept_fn(gid),
                         "from"   : data.get("sender") or gid or "واتساب",
                         "date"   : datetime.date.today().isoformat(),
-                        "content": text,
+                        "content": _cap(text),
                     }
                     try:
                         recv.on_message([rep])

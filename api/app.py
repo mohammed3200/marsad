@@ -54,6 +54,7 @@ PROFILE_SECRET_KEYS = tuple(k for k in SECRET_KEYS if k in ENGINE_KEYS)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # per file
 MAX_UPLOAD_FILES = 20                 # per request
 _UNSAFE_NAME = re.compile(r'[\\/:*?"<>|]')
+_CONTROL_CHARS = re.compile(r'[\x00-\x1f]')
 
 
 def _safe_upload_name(raw: str) -> str:
@@ -61,12 +62,24 @@ def _safe_upload_name(raw: str) -> str:
 
     Path(...).name already strips client-side directories, but leaves "." and
     ".." intact — both name an existing directory, so opening them for write
-    raises IsADirectoryError and the endpoint 500s.
+    raises IsADirectoryError and the endpoint 500s. Control characters
+    (including an embedded null byte) are stripped too: Path(...).name lets
+    them through unmodified, and a null byte reaching open() raises
+    ValueError, not OSError, so it would otherwise bypass the except clause
+    below and surface as an unhandled 500.
     """
     name = Path(raw or "").name
+    name = _CONTROL_CHARS.sub("", name)
     if name in ("", ".", ".."):
         name = "upload"
-    return _UNSAFE_NAME.sub("_", name)[:120]
+    name = _UNSAFE_NAME.sub("_", name)
+    # Truncate the stem, not the whole name — otherwise a long filename loses
+    # its extension, and read_file_to_report dispatches on fpath.suffix, so
+    # the upload would silently be dropped downstream instead of processed.
+    stem, suffix = os.path.splitext(name)
+    suffix = suffix[:120]
+    stem = stem[:max(0, 120 - len(suffix))]
+    return stem + suffix
 
 
 def _profile_list(value) -> list:
@@ -302,6 +315,21 @@ def collect_reports():
     return {"started": service.collect_reports()}
 
 
+# KNOWN ACCEPTED LIMITATION (launch-readiness Task 7, fix round 1, Important 2):
+# `files: list[UploadFile] = File(...)` below makes FastAPI's dependency
+# resolution fully drain the ASGI stream and spool every part to a
+# SpooledTemporaryFile — spilling to disk past 1 MiB, with no per-file ceiling
+# — *before* this function body runs. So MAX_UPLOAD_BYTES / MAX_UPLOAD_FILES
+# bound only the secondary copy this function writes into uploads/, not the
+# disk, time or bandwidth spent receiving the request in the first place. The
+# streaming loop below does correctly stop issuing reads once its own running
+# total crosses the cap, but by then the request was already fully received.
+# Real enforcement needs Request.stream()-level parsing (an architecture
+# change beyond this task) or a reverse-proxy body-size limit in front of this
+# service. Not a regression from this task's fix — a pre-existing gap this
+# task's review surfaced. The web API does not ship this release, so this is
+# accepted for now; move this note into the "Known accepted limitations"
+# section of docs/RELEASE_CHECKLIST.md once Task 24 creates that file.
 @app.post("/api/reports/files")
 async def upload_files(files: list[UploadFile] = File(...)):
     """Save uploads under DATA_DIR, then hand them to the async add-files path."""
@@ -330,7 +358,11 @@ async def upload_files(files: list[UploadFile] = File(...)):
         except HTTPException:
             dest.unlink(missing_ok=True)   # no partial file left behind
             raise
-        except OSError as e:
+        except (OSError, ValueError) as e:
+            # ValueError alongside OSError: open() raises ValueError (not
+            # OSError) for a path containing an embedded null byte. The
+            # sanitiser above strips control characters, so this is a
+            # residual-defense catch, not the primary fix.
             dest.unlink(missing_ok=True)
             raise HTTPException(
                 400, f"تعذّر حفظ الملف: {_safe_upload_name(f.filename)}") from e

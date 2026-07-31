@@ -26,10 +26,11 @@ def isolated_state():
     # it to place uploads. Because this helper is entered *before* api.app is
     # first imported, redirecting the name on core.paths is what makes api.app
     # bind the temp path when it does import. Modules that already imported
-    # DATA_DIR keep their own binding, which is why each is patched by name
-    # above.
+    # DATA_DIR keep their own binding, which is why it's patched by name below
+    # too — both on entry (if already imported) and on exit (re-fetched fresh,
+    # since api.app is commonly imported *during* the block, after this
+    # function's own entry-time lookup already ran and found nothing).
     api_app = sys.modules.get("api.app")
-    api_app_saved = api_app.DATA_DIR if api_app else None
 
     # Also redirect backend.controller path globals if it's already imported
     ctrl = sys.modules.get("backend.controller")
@@ -48,7 +49,7 @@ def isolated_state():
         svc.SAMPLES_F = root / "sample_reports.json"     # deliberately absent
         svc.LATEST_F = root / "reports" / "latest.json"
         paths.DATA_DIR = root
-        if api_app:
+        if api_app is not None:
             api_app.DATA_DIR = root
 
         if ctrl:
@@ -61,7 +62,17 @@ def isolated_state():
         finally:
             (sb.SETTINGS_F, sb.EXAMPLE_F, eng.REPORTS, contacts.CONTACTS_FILE,
              svc.REPORTS, svc.SAMPLES_F, svc.LATEST_F, paths.DATA_DIR) = saved
-            if api_app_saved is not None:
-                api_app.DATA_DIR = api_app_saved
+            # Re-fetch rather than trust the entry-time reference: api.app is
+            # commonly imported *during* the block (that is the whole point
+            # of entering this helper before the first import), so at entry
+            # sys.modules had no "api.app" yet and there was nothing to save
+            # from it. Always re-point it at the just-restored paths.DATA_DIR
+            # — not at whatever api.app.DATA_DIR held before entry, which for
+            # a module imported inside the block is itself the temp root we
+            # are tearing down — or api.app.DATA_DIR is left stuck on a
+            # deleted temp directory for the rest of the process.
+            api_app = sys.modules.get("api.app")
+            if api_app is not None:
+                api_app.DATA_DIR = paths.DATA_DIR
             if ctrl_saved:
                 ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F = ctrl_saved
