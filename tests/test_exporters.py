@@ -55,6 +55,7 @@ class ExporterRobustnessTests(unittest.TestCase):
                     if isinstance(cell, str):
                         self.assertNotIn("%%", cell)
                         self.assertNotIn("None%", cell)
+                        self.assertNotEqual(cell, "None")
 
     def test_excel_creates_a_missing_output_directory(self):
         nested = os.path.join(self.dir, "new", "deeper", "c.xlsx")

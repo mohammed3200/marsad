@@ -10,7 +10,11 @@ from pathlib import Path
 
 
 def _num(value, default=0.0) -> float:
-    """First number in a value the model may have returned as '80%' or '4.2 مليون'."""
+    """First number in a value the model may have returned as '80%' or '4.2 مليون'.
+
+    A blunt heuristic: '2024-2025' also parses as 2024.0. Fine for the
+    percentage/count fields this is used on today; do not point it at
+    currency or date-range fields without re-checking that assumption."""
     if isinstance(value, bool):
         return float(default)
     if isinstance(value, (int, float)):
@@ -378,8 +382,9 @@ def export_excel(results: dict, output_path: str) -> str:
     pbgs=["7F1D1D","78350F","1E3A5F"]
     for i,act in enumerate(_rows(chief.get("top_actions")),act_start+2):
         act=_obj(act)
-        p=max(0,min(_int(act.get("priority",1),1)-1,2)); bg=pbgs[p]
-        for ci,v in enumerate([str(act.get("priority","")),act.get("action",""),act.get("owner",""),
+        pr=_int(act.get("priority",1),1)
+        p=max(0,min(pr-1,2)); bg=pbgs[p]
+        for ci,v in enumerate([str(pr),act.get("action",""),act.get("owner",""),
                                 act.get("deadline",""),act.get("impact","")],1):
             c=ws1.cell(i,ci); c.value=v
             body(c,bold=(ci==1),
