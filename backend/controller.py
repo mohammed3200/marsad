@@ -14,6 +14,7 @@ from PySide6.QtGui import QDesktopServices
 
 from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel, WORKER_AGENTS
 from core.paths import DATA_DIR, BUNDLE_DIR
+from core.errors import friendly_error
 from connectors import ConnectorHub, build_report_html, read_file_to_report
 from .settings_bridge import load_settings, save_settings
 from .models import AgentsModel, ReportsModel
@@ -43,6 +44,7 @@ class AppController(QObject):
     analysisFailed    = Signal(str)
     connectionTested  = Signal(bool, str)
     emailTested       = Signal(bool, str)
+    emailSent         = Signal(bool, str)
     exportDone        = Signal(str)          # path
     exportFailed      = Signal(str)
     reportsChanged    = Signal()
@@ -58,6 +60,7 @@ class AppController(QObject):
     _waEvent          = Signal(str, "QVariant")  # receiver thread → GUI thread
     _collected        = Signal("QVariant")   # reports gathered off the GUI thread
     _filesAdded       = Signal("QVariant")   # files parsed off the GUI thread
+    _emailSent        = Signal(bool, str)    # SMTP result, worker thread → GUI thread
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,11 +80,13 @@ class AppController(QObject):
         self._testing_email  = False
         self._collecting = False
         self._adding     = False
+        self._sending_email = False
         self._thread   = None
         self._worker   = None
         self._shutting_down = False
         self._collected.connect(self._on_collected)
         self._filesAdded.connect(self._on_files_added)
+        self._emailSent.connect(self._on_email_sent)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._exports    = []
         self._recipients = []
@@ -249,12 +254,12 @@ class AppController(QObject):
         try:
             self._collected.emit(self._hub.collect_all())
         except Exception as e:
-            self.notify.emit(f"تعذّر الجمع: {e}")
+            self.notify.emit(f"تعذّر الجمع: {friendly_error(str(e))}")
+        finally:
             self._collecting = False
 
     @Slot("QVariant")
     def _on_collected(self, reps):
-        self._collecting = False
         reps = list(reps or [])
         self._reports.extend(reps)
         self.reportsChanged.emit()
@@ -298,20 +303,22 @@ class AppController(QObject):
     def _run_add_files(self, paths):
         """تفكيك الملفات (Word/Excel/PDF/CSV/TXT/JSON) خارج خيط الواجهة."""
         added, failed = [], []
-        for p in paths:
-            try:
-                rep = read_file_to_report(p, source="ملف")
-                if rep:
-                    added.append(rep)
-                else:
+        try:
+            for p in paths:
+                try:
+                    rep = read_file_to_report(p, source="ملف")
+                    if rep:
+                        added.append(rep)
+                    else:
+                        failed.append(Path(p).name)
+                except Exception:
                     failed.append(Path(p).name)
-            except Exception:
-                failed.append(Path(p).name)
-        self._filesAdded.emit({"added": added, "failed": failed})
+            self._filesAdded.emit({"added": added, "failed": failed})
+        finally:
+            self._adding = False
 
     @Slot("QVariant")
     def _on_files_added(self, res):
-        self._adding = False
         added  = list(res.get("added", []))
         failed = list(res.get("failed", []))
         for rep in added:
@@ -558,17 +565,33 @@ class AppController(QObject):
         if not self._results:
             self.notify.emit("لا توجد نتائج لإرسالها")
             return
-        recipients = (self._settings.get("report_recipients")
-                      or list(self._settings.get("email_dept_map", {}).keys()))
-        if not recipients:
-            self.notify.emit("لا يوجد مستلمون مضبوطون في الإعدادات")
+        if self._sending_email:
             return
+        self._sending_email = True
+        threading.Thread(target=self._run_send_email, daemon=True).start()
+
+    def _run_send_email(self):
+        """SMTP on a worker thread — smtplib blocks for the OS TCP timeout."""
         try:
+            recipients = (self._settings.get("report_recipients")
+                          or list(self._settings.get("email_dept_map", {}).keys()))
+            if not recipients:
+                self._emailSent.emit(False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات")
+                return
             html = build_report_html(self._results)
             ok = self._hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
-            self.notify.emit("أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد")
+            self._emailSent.emit(
+                bool(ok),
+                "أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد — راجع الإعدادات")
         except Exception as e:
-            self.notify.emit(f"خطأ في الإرسال: {e}")
+            self._emailSent.emit(False, friendly_error(str(e)))
+        finally:
+            self._sending_email = False
+
+    @Slot(bool, str)
+    def _on_email_sent(self, ok, message):
+        self.emailSent.emit(ok, message)
+        self.notify.emit(message)
 
     # ───────────────────────── settings / connection ─────────────────────────
     @Slot()
@@ -581,14 +604,16 @@ class AppController(QObject):
     def _run_connection_test(self):
         """اختبار المحرّك على خيط منفصل — النداء قد يستغرق حتى ai_timeout."""
         try:
-            ok, msg = self._ai.test_connection()
-        except Exception as e:
-            ok, msg = False, str(e)
-        self._online = ok
-        self._status = "متصل" if ok else "غير متصل"
-        self.engineChanged.emit()
-        self.connectionTested.emit(ok, msg)
-        self._set_testing_engine(False)
+            try:
+                ok, msg = self._ai.test_connection()
+            except Exception as e:
+                ok, msg = False, str(e)
+            self._online = ok
+            self._status = "متصل" if ok else "غير متصل"
+            self.engineChanged.emit()
+            self.connectionTested.emit(ok, msg)
+        finally:
+            self._set_testing_engine(False)
 
     @Slot("QVariant")
     def saveSettings(self, values):
@@ -662,16 +687,18 @@ class AppController(QObject):
 
     def _run_fetch_models(self):
         try:
-            ok, out = self._ai.list_models()
-        except Exception as e:
-            ok, out = False, str(e)
-        self._models = list(out) if ok and isinstance(out, list) else []
-        self._models_busy = False
-        self.modelsChanged.emit()
-        if self._models:
-            self.notify.emit(f"جُلبت {len(self._models)} نموذجاً")
-        else:
-            self.notify.emit(out if isinstance(out, str) else "تعذّر جلب النماذج")
+            try:
+                ok, out = self._ai.list_models()
+            except Exception as e:
+                ok, out = False, str(e)
+            self._models = list(out) if ok and isinstance(out, list) else []
+            if self._models:
+                self.notify.emit(f"جُلبت {len(self._models)} نموذجاً")
+            else:
+                self.notify.emit(out if isinstance(out, str) else "تعذّر جلب النماذج")
+        finally:
+            self._models_busy = False
+            self.modelsChanged.emit()
 
     def _rebuild_hub(self):
         try:
@@ -693,12 +720,14 @@ class AppController(QObject):
     def _run_email_test(self):
         """اختبار البريد على خيط منفصل — اتصال IMAP/SMTP قد يحجب الواجهة."""
         try:
-            ok, msg = self._hub.test_email()
-        except Exception as e:
-            ok, msg = False, str(e)
-        # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
-        self.emailTested.emit(ok, msg)
-        self._set_testing_email(False)
+            try:
+                ok, msg = self._hub.test_email()
+            except Exception as e:
+                ok, msg = False, str(e)
+            # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
+            self.emailTested.emit(ok, msg)
+        finally:
+            self._set_testing_email(False)
 
     @Slot(result="QVariant")
     def getSettings(self):
@@ -778,8 +807,11 @@ class AppController(QObject):
     @Slot()
     def startWhatsAppBridge(self):
         """جهّز الحزم (أول مرة) وشغّل whatsapp_bridge.js على خيط منفصل."""
-        if self._wa_proc or self._wa_starting:
+        if self._wa_starting:
             return
+        if self._wa_proc is not None and self._wa_proc.poll() is None:
+            return          # still running
+        self._wa_proc = None  # it exited — allow a fresh attempt
         # الجسر يُرسل الرمز والحالة عبر HTTP إلى المستقبِل — شغّله أولاً حتى لو
         # كان استقبال واتساب معطّلاً في الإعدادات، وإلا ضاعت الأحداث وانتظرت النافذة بلا نهاية
         if not self._hub.whatsapp:
@@ -815,8 +847,6 @@ class AppController(QObject):
                                    capture_output=True, text=True, timeout=600)
                 if r.returncode != 0:
                     self.notify.emit("تعذّر تثبيت حزم Node — شغّل npm install يدوياً في مجلد البيانات")
-                    self._wa_starting = False
-                    self.waChanged.emit()
                     return
             log_dir = DATA_DIR / "logs"
             log_dir.mkdir(exist_ok=True)
@@ -832,8 +862,9 @@ class AppController(QObject):
             self.notify.emit("Node.js غير مثبّت — ثبّته أولاً من الخطوة 2")
         except Exception as e:
             self.notify.emit(f"تعذّر تشغيل الجسر: {e}")
-        self._wa_starting = False
-        self.waChanged.emit()
+        finally:
+            self._wa_starting = False
+            self.waChanged.emit()
 
     @Slot()
     def stopWhatsAppBridge(self):
