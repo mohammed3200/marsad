@@ -8,6 +8,8 @@ root package __init__ so the old root package can be removed. Both read the same
 import os, re, datetime
 from pathlib import Path
 
+from core.status import tier
+
 
 def _num(value, default=0.0) -> float:
     """First number in a value the model may have returned as '80%' or '4.2 مليون'.
@@ -81,14 +83,18 @@ def export_pdf(results: dict, output_path: str) -> str:
         return any("؀" <= ch <= "ۿ" for ch in s)
 
     def ar(text):
-        """Arabic-ready string for a reportlab Paragraph: escape → reshape → bidi.
+        """Arabic-ready string for a reportlab Paragraph: reshape → bidi → escape.
+
+        Escaping must come last: XML entities contain Latin letters and ASCII
+        punctuation, so reordering them inside an RTL run emits ';pma&'.
 
         En/em dashes become hyphen-minus first: U+2013/2014 break the BiDi
         number run (renders "8060" out of "60–80%"), while ES separators
         (-, /, .) keep digits as one LTR run."""
-        s = _esc(str(text if text is not None else ""))
+        s = str(text if text is not None else "")
         s = s.replace("–", "-").replace("—", "-")
-        return get_display(arabic_reshaper.reshape(s)) if _has_ar(s) else s
+        s = get_display(arabic_reshaper.reshape(s)) if _has_ar(s) else s
+        return _esc(s)
 
     # ── identity tokens (backend/theme.py) ──
     INK   = colors.HexColor("#141A22")
@@ -101,10 +107,10 @@ def export_pdf(results: dict, output_path: str) -> str:
     WARN  = colors.HexColor("#946200")
     BAD   = colors.HexColor("#B4232A")
 
+    _PDF_TIER = {"good": GOOD, "warn": WARN, "bad": BAD, "neutral": INK2}
+
     def status_color(lit):
-        return {"جيد": GOOD, "آمن": GOOD, "منخفضة": GOOD, "مكتمل": GOOD,
-                "متوسط": WARN, "تحذير": WARN, "متوسطة": WARN, "في الموعد": WARN,
-                "حرج": BAD, "خطر": BAD, "عالية": BAD, "متأخر": BAD}.get(lit, INK2)
+        return _PDF_TIER[tier(lit)]
 
     CONTENT_W = 17 * cm
 
@@ -308,6 +314,12 @@ def export_excel(results: dict, output_path: str) -> str:
     GRN = "D1FAE5"; RED = "FEE2E2"; YEL = "FEF3C7"
     BORD_C = "CBD5E1"
 
+    # one status→colour table, shared by every ladder below (health banner,
+    # KPI status column, risk level, schedule phase status) — see core/status.py
+    _XL_TIER      = {"good": "065F46", "warn": "78350F", "bad": "7F1D1D", "neutral": "334155"}
+    _XL_TIER_FG   = {"good": "6EE7B7", "warn": "FCD34D", "bad": "FCA5A5", "neutral": BORD_C}
+    _XL_TIER_FILL = {"good": GRN,      "warn": YEL,      "bad": RED,      "neutral": GRAY}
+
     def hdr(cell, bg=MID, fg=WHITE, bold=True, size=11):
         cell.font      = Font(bold=bold, color=fg, size=size, name="Arial")
         cell.fill      = PatternFill("solid", start_color=bg)
@@ -332,8 +344,8 @@ def export_excel(results: dict, output_path: str) -> str:
     qual   = _obj(results.get("quality"))
     safety = _obj(results.get("safety"))
     health = chief.get("overall_health","")
-    hbg    = "065F46" if health=="جيد" else "78350F" if health=="متوسط" else "7F1D1D"
-    hfg    = "6EE7B7" if health=="جيد" else "FCD34D" if health=="متوسط" else "FCA5A5"
+    hbg    = _XL_TIER[tier(health)]
+    hfg    = _XL_TIER_FG[tier(health)]
     CW     = 9638
 
     # ═══ ورقة 1: لوحة التحكم ═══
@@ -364,11 +376,12 @@ def export_excel(results: dict, output_path: str) -> str:
     for i,kpi in enumerate(_rows(chief.get("kpis")),r+2):
         kpi=_obj(kpi)
         s=kpi.get("status","")
-        bg=GRN if s=="جيد" else YEL if s=="تحذير" else RED
+        t=tier(s)
+        bg=_XL_TIER_FILL[t]
         for ci,v in enumerate([kpi.get("name",""),kpi.get("value",""),kpi.get("trend",""),s],1):
             c=ws1.cell(i,ci); c.value=v
             body(c,bold=(ci==4),
-                 color="065F46" if s=="جيد" and ci==4 else "92400E" if s=="تحذير" and ci==4 else "991B1B" if ci==4 else "1E293B",
+                 color=_XL_TIER[t] if ci==4 else "1E293B",
                  bg=bg if ci==4 else (GRAY if i%2==0 else WHITE),center=(ci>1))
     for ci,w in enumerate([30,15,10,15,20,15,15],1):
         ws1.column_dimensions[get_column_letter(ci)].width=w
@@ -400,10 +413,9 @@ def export_excel(results: dict, output_path: str) -> str:
                                    [25,14,14,38,38,20]),1):
         hdr(ws2.cell(2,ci),MID); ws2.cell(2,ci).value=h
         ws2.column_dimensions[get_column_letter(ci)].width=w
-    lv={"عالية":("7F1D1D","FCA5A5"),"متوسطة":("78350F","FCD34D"),"منخفضة":("064E3B","6EE7B7")}
     for ri,rk in enumerate(risks,3):
         rk=_obj(rk)
-        l=rk.get("level",""); bg,fg=lv.get(l,("1E293B",WHITE))
+        l=rk.get("level",""); t=tier(l); bg,fg=_XL_TIER[t],_XL_TIER_FG[t]
         for ci,v in enumerate([rk.get("title",""),l,rk.get("category",""),
                                 rk.get("description",""),rk.get("solution",""),rk.get("owner","")],1):
             c=ws2.cell(ri,ci); c.value=v
@@ -430,11 +442,11 @@ def export_excel(results: dict, output_path: str) -> str:
         ws3.column_dimensions[get_column_letter(ci)].width=w
     for ri,ph in enumerate(_rows(sched.get("phases")),r2+2):
         ph=_obj(ph)
-        s=ph.get("status",""); sbg=GRN if s=="مكتمل" else RED if s=="متأخر" else YEL
+        s=ph.get("status",""); t=tier(s); sbg=_XL_TIER_FILL[t]
         for ci,v in enumerate([ph.get("name",""),s,_pct(ph.get("completion_pct",0))],1):
             c=ws3.cell(ri,ci); c.value=v
             body(c,bold=(ci==2),
-                 color="065F46" if s=="مكتمل" and ci==2 else "991B1B" if s=="متأخر" and ci==2 else "92400E" if ci==2 else "1E293B",
+                 color=_XL_TIER[t] if ci==2 else "1E293B",
                  bg=sbg if ci==2 else (GRAY if ri%2==0 else WHITE),center=(ci>1))
         ws3.row_dimensions[ri].height=22
 

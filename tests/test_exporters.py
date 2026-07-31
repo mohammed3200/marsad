@@ -69,5 +69,24 @@ class ExporterRobustnessTests(unittest.TestCase):
                 self.assertTrue(os.path.exists(out))
 
 
+class StatusAndEscapingTests(unittest.TestCase):
+    def test_ampersand_survives_the_pdf_pipeline(self):
+        import os, tempfile
+        res = hostile_results()
+        res["chief"]["executive_summary"] = "شركة الاتصالات & الشبكات"
+        out = export_pdf(res, os.path.join(tempfile.mkdtemp(), "amp.pdf"))
+        import PyPDF2
+        text = "".join(p.extract_text() or "" for p in PyPDF2.PdfReader(out).pages)
+        self.assertNotIn(";pma&", text)
+
+    def test_failed_chief_is_not_rendered_as_critical(self):
+        from core.status import tier
+        self.assertEqual(tier("غير محدد"), "neutral")
+
+    def test_html_and_excel_agree_with_the_pdf_on_a_medium_kpi(self):
+        from core.status import tier
+        self.assertEqual(tier("متوسط"), "warn")
+
+
 if __name__ == "__main__":
     unittest.main()

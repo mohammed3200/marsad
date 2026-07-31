@@ -32,12 +32,15 @@ from pathlib import Path
 try:
     from core.paths import DATA_DIR, BUNDLE_DIR
     from core.errors import friendly_error
+    from core.status import tier
     LOG_DIR = DATA_DIR / "logs"
 except Exception:  # pragma: no cover — core not importable in isolation
     DATA_DIR = BUNDLE_DIR = Path(__file__).parent
     LOG_DIR = DATA_DIR / "logs"
     def friendly_error(raw):
         return str(raw)
+    def tier(_literal):
+        return "neutral"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -869,11 +872,14 @@ def _h(value) -> str:
     return _html.escape("" if value is None else str(value), quote=True)
 
 
+_HTML_TIER = {"good": "#10b981", "warn": "#f59e0b",
+              "bad": "#ef4444", "neutral": "#64748b"}
+
+
 def build_report_html(results: dict) -> str:
     chief  = results.get("chief", {})
     health = chief.get("overall_health", "غير محدد")
-    color  = "#10b981" if health == "جيد" else \
-             "#f59e0b" if health == "متوسط" else "#ef4444"
+    color  = _HTML_TIER[tier(health)]
     date   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     actions_rows = ""
@@ -889,8 +895,7 @@ def build_report_html(results: dict) -> str:
 
     kpi_cards = ""
     for kpi in chief.get("kpis", [])[:6]:
-        sc = "#10b981" if kpi.get("status") == "جيد" else \
-             "#f59e0b" if kpi.get("status") == "تحذير" else "#ef4444"
+        sc = _HTML_TIER[tier(kpi.get("status"))]
         kpi_cards += f"""
         <div style="background:#f8fafc;border:1px solid {sc};border-radius:8px;
                     padding:12px;text-align:center;min-width:100px;">
