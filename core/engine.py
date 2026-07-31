@@ -38,7 +38,7 @@ class AIEngine:
     def _bad_scheme(url: str) -> dict | None:
         """يرفض أي مخطط غير http/https قبل الطلب — يُعيد {"error":…} عند الرفض وNone عند القبول."""
         if not url.lower().startswith(("http://", "https://")):
-            return {"error": f"رابط غير مدعوم (http/https فقط): {url}"}
+            return {"error": f"رابط غير مدعوم (http/https فقط): {url}", "status": None}
         return None
 
     @staticmethod
