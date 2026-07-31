@@ -515,7 +515,7 @@ def export_excel(results: dict, output_path: str) -> str:
     r = 2
     for label, key, fields in DEPT_ROWS:
         data = _obj(results.get(key))
-        if not data:
+        if not data or "error" in data:
             continue
         for field_label, getter in fields:
             wsd.cell(r, 1).value = label

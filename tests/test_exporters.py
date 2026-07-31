@@ -109,6 +109,35 @@ class DepartmentCoverageTests(unittest.TestCase):
                       "العقود", "المشتريات", "المخازن"):
             self.assertIn(label, text)
 
+    def test_errored_or_malformed_agents_are_skipped_not_faked(self):
+        """A failed agent must not render as a plausible-looking zero.
+
+        ops carries an {"error": ...} payload (the shape core/engine.py's
+        backends actually return on failure) — it must be skipped, not shown
+        as "0%"/"0". civil is None and contract is a list — both already
+        malformed shapes that _obj() flattens to {}, also skipped. procure
+        and supply are well-formed and must still render, so the sheet as a
+        whole keeps working around the bad entries."""
+        import openpyxl, os, tempfile
+        res = hostile_results()
+        res.update({
+            "ops":      {"error": "boom"},
+            "civil":    None,
+            "contract": ["not", "a", "dict"],
+            "procure":  {"pending_orders": 3, "approved_vendors": 9},
+            "supply":   {"warehouse_fill_pct": 70, "delayed_shipments": 1},
+        })
+        out = export_excel(res, os.path.join(tempfile.mkdtemp(), "dept_degrade.xlsx"))
+        wb = openpyxl.load_workbook(out)
+        self.assertIn("الإدارات", wb.sheetnames)
+        text = "\n".join(
+            str(c) for row in wb["الإدارات"].iter_rows(values_only=True)
+            for c in row if c is not None)
+        for label in ("العمليات الميدانية", "الأعمال الإنشائية", "العقود"):
+            self.assertNotIn(label, text)
+        for label in ("المشتريات", "المخازن"):
+            self.assertIn(label, text)
+
 
 if __name__ == "__main__":
     unittest.main()
