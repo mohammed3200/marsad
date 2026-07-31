@@ -88,5 +88,27 @@ class StatusAndEscapingTests(unittest.TestCase):
         self.assertEqual(tier("متوسط"), "warn")
 
 
+class DepartmentCoverageTests(unittest.TestCase):
+    def test_every_worker_agent_reaches_the_workbook(self):
+        import openpyxl, os, tempfile
+        res = hostile_results()
+        res.update({
+            "ops":      {"completion_pct": 80, "active_sites": 12, "team_status": "جيد"},
+            "civil":    {"towers_built": 30, "towers_total": 50, "civil_pct": 60},
+            "contract": {"active_contracts": 5, "total_value": "8م"},
+            "procure":  {"pending_orders": 3, "approved_vendors": 9},
+            "supply":   {"warehouse_fill_pct": 70, "delayed_shipments": 1},
+        })
+        out = export_excel(res, os.path.join(tempfile.mkdtemp(), "dept.xlsx"))
+        wb = openpyxl.load_workbook(out)
+        self.assertIn("الإدارات", wb.sheetnames)
+        text = "\n".join(
+            str(c) for row in wb["الإدارات"].iter_rows(values_only=True)
+            for c in row if c is not None)
+        for label in ("العمليات الميدانية", "الأعمال الإنشائية",
+                      "العقود", "المشتريات", "المخازن"):
+            self.assertIn(label, text)
+
+
 if __name__ == "__main__":
     unittest.main()

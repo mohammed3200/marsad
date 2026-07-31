@@ -483,5 +483,53 @@ def export_excel(results: dict, output_path: str) -> str:
         body(ws5.cell(ri,2),True,bg=bg,center=True); ws5.cell(ri,2).value=str(v)
     ws5.column_dimensions["A"].width=28; ws5.column_dimensions["B"].width=20
 
+    # ── ورقة الإدارات — الوكلاء الذين لا تظهر نتائجهم في أي مكان آخر ──
+    DEPT_ROWS = (
+        ("العمليات الميدانية", "ops", (
+            ("نسبة الإنجاز", lambda d: _pct(d.get("completion_pct", 0))),
+            ("المواقع النشطة", lambda d: _int(d.get("active_sites", 0))),
+            ("حالة الفريق", lambda d: d.get("team_status", "-")))),
+        ("الأعمال الإنشائية", "civil", (
+            ("الأبراج المنجزة", lambda d: _int(d.get("towers_built", 0))),
+            ("إجمالي الأبراج", lambda d: _int(d.get("towers_total", 0))),
+            ("نسبة الإنشاء", lambda d: _pct(d.get("civil_pct", 0))))),
+        ("العقود", "contract", (
+            ("العقود النشطة", lambda d: _int(d.get("active_contracts", 0))),
+            ("القيمة الإجمالية", lambda d: d.get("total_value", "-")),
+            ("مدفوعات معلّقة", lambda d: d.get("pending_payments", "-")))),
+        ("المشتريات", "procure", (
+            ("طلبات معلّقة", lambda d: _int(d.get("pending_orders", 0))),
+            ("موردون معتمدون", lambda d: _int(d.get("approved_vendors", 0))),
+            ("قيمة أوامر الشراء", lambda d: d.get("total_po_value", "-")))),
+        ("المخازن وسلاسل التوريد", "supply", (
+            ("امتلاء المخزن", lambda d: _pct(d.get("warehouse_fill_pct", 0))),
+            ("شحنات في الطريق", lambda d: _int(d.get("in_transit_shipments", 0))),
+            ("شحنات متأخرة", lambda d: _int(d.get("delayed_shipments", 0))))),
+    )
+
+    wsd = wb.create_sheet("الإدارات")
+    wsd.sheet_view.rightToLeft = True
+    for ci, h in enumerate(["الإدارة", "المؤشر", "القيمة"], 1):
+        hdr(wsd.cell(1, ci), MID)
+        wsd.cell(1, ci).value = h
+    r = 2
+    for label, key, fields in DEPT_ROWS:
+        data = _obj(results.get(key))
+        if not data:
+            continue
+        for field_label, getter in fields:
+            wsd.cell(r, 1).value = label
+            wsd.cell(r, 2).value = field_label
+            try:
+                wsd.cell(r, 3).value = getter(data)
+            except Exception:
+                wsd.cell(r, 3).value = "-"
+            for ci in (1, 2, 3):
+                body(wsd.cell(r, ci), bg=(GRAY if r % 2 == 0 else WHITE))
+            r += 1
+    wsd.column_dimensions["A"].width = 28
+    wsd.column_dimensions["B"].width = 24
+    wsd.column_dimensions["C"].width = 18
+
     wb.save(output_path)
     return output_path
