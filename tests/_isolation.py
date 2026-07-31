@@ -36,7 +36,7 @@ def isolated_state():
     ctrl = sys.modules.get("backend.controller")
     ctrl_saved = None
     if ctrl:
-        ctrl_saved = (ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F)
+        ctrl_saved = (ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F, ctrl.DATA_DIR)
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -56,6 +56,7 @@ def isolated_state():
             ctrl.REPORTS = root / "reports"
             ctrl.SAMPLES_F = root / "sample_reports.json"
             ctrl.LATEST_F = root / "reports" / "latest.json"
+            ctrl.DATA_DIR = root
 
         try:
             yield root
@@ -75,4 +76,4 @@ def isolated_state():
             if api_app is not None:
                 api_app.DATA_DIR = paths.DATA_DIR
             if ctrl_saved:
-                ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F = ctrl_saved
+                ctrl.REPORTS, ctrl.SAMPLES_F, ctrl.LATEST_F, ctrl.DATA_DIR = ctrl_saved

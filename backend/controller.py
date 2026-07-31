@@ -79,6 +79,7 @@ class AppController(QObject):
         self._adding     = False
         self._thread   = None
         self._worker   = None
+        self._shutting_down = False
         self._collected.connect(self._on_collected)
         self._filesAdded.connect(self._on_files_added)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
@@ -368,6 +369,13 @@ class AppController(QObject):
         self._worker.log.connect(self.logMessage)
         self._worker.finished.connect(self._on_analysis_done)
         self._worker.failed.connect(self._on_analysis_failed)
+        # Canonical Qt worker-thread cleanup: connecting to the *thread's*
+        # finished (not the worker's own) guarantees the deleteLater lands
+        # while QThreadPrivate::finish() is still flushing the thread's event
+        # queue. Doing it any later (e.g. an explicit worker.deleteLater()
+        # call after wait() returns) posts to a queue nothing will ever drain
+        # again — the worker outlives every analysis run.
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
     @Slot("QVariant")
@@ -395,17 +403,49 @@ class AppController(QObject):
             self._thread.wait()
             self._thread.deleteLater()
             self._thread = None
-        if self._worker:
-            self._worker.deleteLater()
-            self._worker = None
+        # No explicit self._worker.deleteLater() here: runAnalysis() already
+        # connected thread.finished -> worker.deleteLater(), which by the
+        # time wait() above returns has already run (and deleted the C++
+        # object) — calling deleteLater() again on it raises
+        # "Internal C++ object already deleted". Just drop the Python ref.
+        self._worker = None
+
+    def _shutdown_wait_budget_ms(self) -> int:
+        """How long shutdown() will block waiting for a live analysis thread
+        to notice it's been interrupted.
+
+        Cancellation is cooperative (AnalysisWorker passes should_stop into
+        AgentsEngine.run_all, checked between agents) — quit() can only take
+        effect once the in-flight agent call returns, and that call is a
+        synchronous urlopen bounded by ai_timeout, not by anything shorter.
+        So the budget must be at least one full ai_timeout, not the original
+        code's flat 5s (which timed out on essentially every quit during a
+        live analysis — see task-12-findings-r1.md, Critical 1)."""
+        try:
+            ai_timeout = int(self._settings.get("ai_timeout", 180))
+        except (TypeError, ValueError):
+            ai_timeout = 180
+        return (max(ai_timeout, 5) + 5) * 1000
 
     @Slot()
     def shutdown(self):
         """Stop every background worker before the app object is destroyed.
 
-        Without this the QThread is torn down while still running and Qt calls
-        qFatal — closing the window during an analysis aborted the process."""
-        if getattr(self, "_shutting_down", False):
+        Without this the QThread is torn down while still running and Qt
+        calls qFatal — closing the window during an analysis aborted the
+        process.
+
+        There is deliberately no terminate() fallback. Nothing in the
+        pipeline could poll for interruption before should_stop existed, so
+        terminate() was not a rare last resort — it fired on essentially
+        every quit during a live analysis. Forcibly cancelling a thread that
+        may be mid network I/O or inside a CPU-bound stretch (json.dumps,
+        _parse_json) can unwind it while it still holds the GIL's internal
+        mutex, hanging the whole process forever — worse than the abort this
+        fixes. Cooperative cancellation makes quit() actually work once the
+        thread notices, so there is nothing left for terminate() to do that
+        wouldn't risk that deadlock for no benefit."""
+        if self._shutting_down:
             return
         self._shutting_down = True
         try:
@@ -417,13 +457,23 @@ class AppController(QObject):
                 self._hub.stop_all()
         except Exception:
             pass
+        thread_stopped = True
         if self._thread:
             self._thread.requestInterruption()
             self._thread.quit()
-            if not self._thread.wait(5000):
-                self._thread.terminate()
-                self._thread.wait(1000)
-            self._thread = None
+            thread_stopped = self._thread.wait(self._shutdown_wait_budget_ms())
+            if thread_stopped:
+                self._thread = None
+            else:
+                # Checked and acted on, not dropped: a still-running thread
+                # stays referenced (and un-terminated) rather than being
+                # silently forgotten, which would only defer the original
+                # "Destroyed while thread is still running" qFatal to
+                # whenever the controller itself is torn down.
+                self.logMessage.emit(
+                    "تعذّر إيقاف خيط التحليل خلال المهلة المحددة — قد يستمر "
+                    "بالعمل في الخلفية حتى تنتهي المكالمة الشبكية الحالية")
+        if thread_stopped:
             self._worker = None
 
     # ───────────────────────── reports / export ─────────────────────────

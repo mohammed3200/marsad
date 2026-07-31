@@ -76,13 +76,16 @@ class SettingsStoreTests(unittest.TestCase):
         fake.REPORTS = "REAL_REPORTS"
         fake.SAMPLES_F = "REAL_SAMPLES"
         fake.LATEST_F = "REAL_LATEST"
+        fake.DATA_DIR = "REAL_DATA_DIR"
         sys.modules["backend.controller"] = fake
         try:
             with isolated_state() as root:
                 self.assertNotEqual(fake.REPORTS, "REAL_REPORTS")
                 self.assertEqual(str(fake.LATEST_F).startswith(str(root)), True)
+                self.assertEqual(fake.DATA_DIR, root)
             self.assertEqual(fake.REPORTS, "REAL_REPORTS")   # restored
             self.assertEqual(fake.LATEST_F, "REAL_LATEST")
+            self.assertEqual(fake.DATA_DIR, "REAL_DATA_DIR")
         finally:
             del sys.modules["backend.controller"]
 

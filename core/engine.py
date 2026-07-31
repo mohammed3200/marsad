@@ -443,17 +443,26 @@ class AgentsEngine:
         )
         return self.ai.ask(system, reports_text)
 
-    def run_all(self, reports: list, progress_cb=None, agent_cb=None) -> dict:
+    def run_all(self, reports: list, progress_cb=None, agent_cb=None,
+                should_stop=None) -> dict:
         """تشغيل جميع الوكلاء وإرجاع النتائج.
 
         agent_cb(agent_id, state) — state ∈ {"running","done","error"} — يُستدعى
         قبل/بعد كل وكيل حتى تعرض الواجهة الحالة الحيّة لكل وكيل.
+
+        should_stop — استدعاء اختياري بلا معطيات، يُفحص بين كل وكيل والتالي
+        وقبل استدعاء وكيل التنسيق. إن أعاد True يتوقف التحليل فوراً دون رفع
+        استثناء ودون حفظ نتائج جزئية، ويُعاد ما اكتمل من نتائج الوكلاء حتى تلك
+        اللحظة. إلغاء تعاوني — يُستخدم عند إغلاق النافذة أثناء تحليل جارٍ.
         """
         text = self._format_reports(reports)
         results = {}
         total   = len(WORKER_AGENTS) + 1
 
         for i, ag_id in enumerate(WORKER_AGENTS):
+            if should_stop and should_stop():
+                self.log("⏹ أُوقف التحليل")
+                return results
             self.log(f"⏳ {ag_id}...")
             if agent_cb:
                 agent_cb(ag_id, "running")
@@ -469,6 +478,10 @@ class AgentsEngine:
                     agent_cb(ag_id, "done")
             if progress_cb:
                 progress_cb(int((i+1)/total*100))
+
+        if should_stop and should_stop():
+            self.log("⏹ أُوقف التحليل")
+            return results
 
         # وكيل التنسيق — يُغذّى فقط بنتائج الوكلاء الناجحة (لا نمرّر أخطاء)
         self.log("⏳ وكيل التنسيق المركزي...")
