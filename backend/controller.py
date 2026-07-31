@@ -393,6 +393,36 @@ class AppController(QObject):
         if self._thread:
             self._thread.quit()
             self._thread.wait()
+            self._thread.deleteLater()
+            self._thread = None
+        if self._worker:
+            self._worker.deleteLater()
+            self._worker = None
+
+    @Slot()
+    def shutdown(self):
+        """Stop every background worker before the app object is destroyed.
+
+        Without this the QThread is torn down while still running and Qt calls
+        qFatal — closing the window during an analysis aborted the process."""
+        if getattr(self, "_shutting_down", False):
+            return
+        self._shutting_down = True
+        try:
+            self.stopWhatsAppBridge()
+        except Exception:
+            pass
+        try:
+            if self._hub:
+                self._hub.stop_all()
+        except Exception:
+            pass
+        if self._thread:
+            self._thread.requestInterruption()
+            self._thread.quit()
+            if not self._thread.wait(5000):
+                self._thread.terminate()
+                self._thread.wait(1000)
             self._thread = None
             self._worker = None
 

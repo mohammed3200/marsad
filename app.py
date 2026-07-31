@@ -57,6 +57,8 @@ def main():
 
     view.show()
 
+    app.aboutToQuit.connect(controller.shutdown)
+
     # Ctrl+C: quit the event loop cleanly instead of dying mid-metacall
     # (an interrupt inside a property setter tears the controller down while
     # QML bindings are still evaluating — the "of null" cascade).
