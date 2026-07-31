@@ -5,7 +5,39 @@ UI-agnostic standalone functions taking (results, output_path). Moved out of the
 root package __init__ so the old root package can be removed. Both read the same
 `results` dict (keyed by agent id) that the dashboard and connectors use.
 """
-import os, datetime
+import os, re, datetime
+from pathlib import Path
+
+
+def _num(value, default=0.0) -> float:
+    """First number in a value the model may have returned as '80%' or '4.2 مليون'."""
+    if isinstance(value, bool):
+        return float(default)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        m = re.search(r"-?\d+(?:\.\d+)?", value.replace(",", ""))
+        if m:
+            return float(m.group())
+    return float(default)
+
+
+def _int(value, default=0) -> int:
+    return int(_num(value, default))
+
+
+def _pct(value) -> str:
+    """Format a percentage without ever producing '80%%' or 'None%'."""
+    return f"{_num(value, 0.0):g}%"
+
+
+def _rows(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _obj(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
 
 def export_pdf(results: dict, output_path: str) -> str:
     """Branded Arabic PDF — Light Executive Report identity (white paper,
@@ -109,10 +141,10 @@ def export_pdf(results: dict, output_path: str) -> str:
     def arabic_num(n):
         return "".join(AR_D[int(d)] if d.isdigit() else d for d in str(n))
 
-    chief = results.get("chief", {})
-    risk  = results.get("risk", {})
-    sched = results.get("schedule", {})
-    fin   = results.get("cost", {})
+    chief = _obj(results.get("chief"))
+    risk  = _obj(results.get("risk"))
+    sched = _obj(results.get("schedule"))
+    fin   = _obj(results.get("cost"))
     health = chief.get("overall_health", "غير محدد")
 
     story = []
@@ -156,13 +188,14 @@ def export_pdf(results: dict, output_path: str) -> str:
                               ("RIGHTPADDING", (0, 0), (0, -1), 8)])))
 
     # ── KPIs ──
-    kpis = chief.get("kpis") or []
+    kpis = _rows(chief.get("kpis"))
     if kpis:
         story.extend(section("المؤشرات الرئيسية"))
         story.append(Spacer(1, 4))
         data = [[Paragraph(ar(h), PS("th", "Naskh-Bold", 9, INK2, TA_CENTER))
                  for h in ["المؤشر", "القيمة", "الاتجاه", "الحالة"]]]
         for k in kpis:
+            k = _obj(k)
             s = k.get("status", "")
             data.append([Paragraph(ar(k.get("name", "")), PS("kn", "Naskh", 10, INK)),
                          val(k.get("value", "")),
@@ -172,11 +205,12 @@ def export_pdf(results: dict, output_path: str) -> str:
                            style=TableStyle(rows_style(len(data), header=True))))
 
     # ── top actions ──
-    actions = chief.get("top_actions") or []
+    actions = _rows(chief.get("top_actions"))
     if actions:
         story.extend(section("خطة العمل الفورية"))
         story.append(Spacer(1, 4))
         for i, act in enumerate(actions, 1):
+            act = _obj(act)
             meta = "  ·  ".join(p for p in (act.get("owner", ""), act.get("deadline", ""),
                                             act.get("impact", "")) if p)
             row = Table([[Paragraph(ar(act.get("action", "")), PS("aa", "Naskh-Bold", 10, INK))],
@@ -187,7 +221,7 @@ def export_pdf(results: dict, output_path: str) -> str:
                                   ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
                                   ("LEFTPADDING", (0, 0), (-1, -1), 0),
                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-            story.append(Table([[row, Paragraph(ar(arabic_num(act.get("priority", i))),
+            story.append(Table([[row, Paragraph(ar(arabic_num(_int(act.get("priority", i), i))),
                                                 PS("an", "Naskh-Bold", 11, ACC))]],
                 colWidths=[CONTENT_W - 1.2 * cm, 1.2 * cm],
                 style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -195,13 +229,14 @@ def export_pdf(results: dict, output_path: str) -> str:
                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
 
     # ── risk register ──
-    risks = risk.get("risks") or []
+    risks = _rows(risk.get("risks"))
     if risks:
         story.extend(section("سجل المخاطر"))
         story.append(Spacer(1, 4))
         data = [[Paragraph(ar(h), PS("rh", "Naskh-Bold", 9, INK2, TA_CENTER))
                  for h in ["المخاطرة", "المستوى", "الوصف", "الحل"]]]
         for rk in risks:
+            rk = _obj(rk)
             lv = rk.get("level", "")
             data.append([Paragraph(ar(rk.get("title", "")), PS("rt", "Naskh-Bold", 9, INK)),
                          val(lv, color=status_color(lv), size=9, bold=True),
@@ -224,17 +259,14 @@ def export_pdf(results: dict, output_path: str) -> str:
     # ── finance ──
     story.extend(section("الوضع المالي"))
     story.append(Spacer(1, 4))
-    try:
-        dev = float(fin.get("deviation_pct", 0) or 0)
-    except (TypeError, ValueError):
-        dev = 0.0
+    dev = _num(fin.get("deviation_pct", 0))
     fdata = [[Paragraph(ar(lbl), PS("fl", "Naskh", 10, INK2)), val(v)]
              for lbl, v in (("الميزانية الإجمالية", fin.get("total_budget", "-")),
                             ("المُنفَق", fin.get("spent", "-")),
                             ("المتبقي", fin.get("remaining", "-")),
-                            ("نسبة الإنفاق", f'{fin.get("spent_pct", 0)}%'))]
+                            ("نسبة الإنفاق", _pct(fin.get("spent_pct", 0))))]
     fdata.append([Paragraph(ar("نسبة الانحراف"), PS("fld", "Naskh", 10, INK2)),
-                  val(f'+{dev:g}%', color=BAD if dev else INK)])
+                  val(f"{dev:+g}%", color=BAD if dev > 0 else INK)])
     story.append(Table(fdata, colWidths=[10 * cm, 7 * cm],
                        style=TableStyle(rows_style(len(fdata)))))
 
@@ -264,6 +296,8 @@ def export_excel(results: dict, output_path: str) -> str:
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils  import get_column_letter
 
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
     wb  = Workbook()
     MID = "1E3A5F"; ACC = "2563EB"
     WHITE = "FFFFFF"; GRAY = "F1F5F9"; ALT = "EBF3FB"
@@ -287,12 +321,12 @@ def export_excel(results: dict, output_path: str) -> str:
         for row in ws.iter_rows(r1,r2,c1,c2):
             for cell in row: cell.border = b
 
-    chief  = results.get("chief",{})
-    risks  = results.get("risk",{}).get("risks",[])
-    sched  = results.get("schedule",{})
-    fin    = results.get("cost",{})
-    qual   = results.get("quality",{})
-    safety = results.get("safety",{})
+    chief  = _obj(results.get("chief"))
+    risks  = _rows(_obj(results.get("risk")).get("risks"))
+    sched  = _obj(results.get("schedule"))
+    fin    = _obj(results.get("cost"))
+    qual   = _obj(results.get("quality"))
+    safety = _obj(results.get("safety"))
     health = chief.get("overall_health","")
     hbg    = "065F46" if health=="جيد" else "78350F" if health=="متوسط" else "7F1D1D"
     hfg    = "6EE7B7" if health=="جيد" else "FCD34D" if health=="متوسط" else "FCA5A5"
@@ -323,7 +357,8 @@ def export_excel(results: dict, output_path: str) -> str:
     ws1[f"A{r}"].value="مؤشرات الأداء"
     for ci,h in enumerate(["المؤشر","القيمة","الاتجاه","الحالة"],1):
         hdr(ws1.cell(r+1,ci),MID); ws1.cell(r+1,ci).value=h
-    for i,kpi in enumerate(chief.get("kpis",[]),r+2):
+    for i,kpi in enumerate(_rows(chief.get("kpis")),r+2):
+        kpi=_obj(kpi)
         s=kpi.get("status","")
         bg=GRN if s=="جيد" else YEL if s=="تحذير" else RED
         for ci,v in enumerate([kpi.get("name",""),kpi.get("value",""),kpi.get("trend",""),s],1):
@@ -335,16 +370,17 @@ def export_excel(results: dict, output_path: str) -> str:
         ws1.column_dimensions[get_column_letter(ci)].width=w
 
     # خطة العمل
-    act_start=r+2+len(chief.get("kpis",[]))+2
+    act_start=r+2+len(_rows(chief.get("kpis")))+2
     ws1.merge_cells(f"A{act_start}:G{act_start}"); hdr(ws1[f"A{act_start}"],MID,WHITE,True,12)
     ws1[f"A{act_start}"].value="خطة العمل الفورية"
-    for ci,h in enumerate(["#","الإجراء","المسؤول","الموعد","التأثير","الإدارة"],1):
+    for ci,h in enumerate(["#","الإجراء","المسؤول","الموعد","التأثير"],1):
         hdr(ws1.cell(act_start+1,ci),MID); ws1.cell(act_start+1,ci).value=h
     pbgs=["7F1D1D","78350F","1E3A5F"]
-    for i,act in enumerate(chief.get("top_actions",[]),act_start+2):
-        p=min(act.get("priority",1)-1,2); bg=pbgs[p]
+    for i,act in enumerate(_rows(chief.get("top_actions")),act_start+2):
+        act=_obj(act)
+        p=max(0,min(_int(act.get("priority",1),1)-1,2)); bg=pbgs[p]
         for ci,v in enumerate([str(act.get("priority","")),act.get("action",""),act.get("owner",""),
-                                act.get("deadline",""),act.get("impact",""),act.get("dept","")],1):
+                                act.get("deadline",""),act.get("impact","")],1):
             c=ws1.cell(i,ci); c.value=v
             body(c,bold=(ci==1),
                  color="FCA5A5" if ci==1 and p==0 else "FCD34D" if ci==1 and p==1 else "93C5FD" if ci==1 else "1E293B",
@@ -361,6 +397,7 @@ def export_excel(results: dict, output_path: str) -> str:
         ws2.column_dimensions[get_column_letter(ci)].width=w
     lv={"عالية":("7F1D1D","FCA5A5"),"متوسطة":("78350F","FCD34D"),"منخفضة":("064E3B","6EE7B7")}
     for ri,rk in enumerate(risks,3):
+        rk=_obj(rk)
         l=rk.get("level",""); bg,fg=lv.get(l,("1E293B",WHITE))
         for ci,v in enumerate([rk.get("title",""),l,rk.get("category",""),
                                 rk.get("description",""),rk.get("solution",""),rk.get("owner","")],1):
@@ -382,14 +419,14 @@ def export_excel(results: dict, output_path: str) -> str:
     ws3.column_dimensions["A"].width=28; ws3.column_dimensions["B"].width=22
     r2=6; ws3.merge_cells(f"A{r2}:D{r2}"); hdr(ws3[f"A{r2}"],ACC,WHITE,True,11)
     ws3[f"A{r2}"].value="مراحل المشروع"
-    for ci,(h,w) in enumerate(zip(["المرحلة","الحالة","الإنجاز (%)","الإدارة المسؤولة"],
-                                   [28,16,18,30]),1):
+    for ci,(h,w) in enumerate(zip(["المرحلة","الحالة","الإنجاز (%)"],
+                                   [28,16,18]),1):
         hdr(ws3.cell(r2+1,ci),MID); ws3.cell(r2+1,ci).value=h
         ws3.column_dimensions[get_column_letter(ci)].width=w
-    for ri,ph in enumerate(sched.get("phases",[]),r2+2):
+    for ri,ph in enumerate(_rows(sched.get("phases")),r2+2):
+        ph=_obj(ph)
         s=ph.get("status",""); sbg=GRN if s=="مكتمل" else RED if s=="متأخر" else YEL
-        for ci,v in enumerate([ph.get("name",""),s,f'{ph.get("completion_pct",0)}%',
-                                ph.get("responsible_dept","")],1):
+        for ci,v in enumerate([ph.get("name",""),s,_pct(ph.get("completion_pct",0))],1):
             c=ws3.cell(ri,ci); c.value=v
             body(c,bold=(ci==2),
                  color="065F46" if s=="مكتمل" and ci==2 else "991B1B" if s=="متأخر" and ci==2 else "92400E" if ci==2 else "1E293B",
@@ -404,9 +441,8 @@ def export_excel(results: dict, output_path: str) -> str:
         ("الميزانية الإجمالية",fin.get("total_budget","-"),"D1FAE5"),
         ("المُنفَق",fin.get("spent","-"),"DBEAFE"),
         ("المتبقي",fin.get("remaining","-"),"E0F2FE"),
-        ("نسبة الإنفاق",f'{fin.get("spent_pct",0)}%',GRAY),
-        ("نسبة الانحراف",f'+{fin.get("deviation_pct",0)}%',"FEE2E2"),
-        ("الدفعة القادمة",fin.get("next_payment","-"),GRAY),
+        ("نسبة الإنفاق",_pct(fin.get("spent_pct",0)),GRAY),
+        ("نسبة الانحراف",f"{_num(fin.get('deviation_pct', 0)):+g}%","FEE2E2"),
     ],2):
         ws4.row_dimensions[ri].height=24
         body(ws4.cell(ri,1),True,bg=GRAY); ws4.cell(ri,1).value=l
@@ -421,9 +457,9 @@ def export_excel(results: dict, output_path: str) -> str:
         ("محطات فُحصت",qual.get("inspected","-"),GRAY),
         ("اجتازت المعيار",qual.get("passed","-"),GRN),
         ("تحتاج مراجعة",qual.get("failed","-"),RED),
-        ("نسبة النجاح",f'{qual.get("pass_rate",0)}%',GRN),
+        ("نسبة النجاح",_pct(qual.get("pass_rate",0)),GRN),
         ("حوادث السلامة",safety.get("incidents","-"),RED),
-        ("درجة السلامة",f'{safety.get("safety_score",0)}%',GRN),
+        ("درجة السلامة",_pct(safety.get("safety_score",0)),GRN),
     ],2):
         ws5.row_dimensions[ri].height=24
         body(ws5.cell(ri,1),True,bg=GRAY); ws5.cell(ri,1).value=l
