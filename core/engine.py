@@ -60,16 +60,16 @@ class AIEngine:
             except Exception:
                 body = ""
             # جسم الرد الخام (JSON إنجليزي) لا يصل الواجهة — رسالة عربية موجزة
-            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}")}
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
         except urllib.error.URLError as e:
             if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
-                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
             # السبب الخام (gaierror/Errno…) يمرّ عبر المترجم — لا يصل الواجهة خاماً
-            return {"error": friendly_error(str(e.reason))}
+            return {"error": friendly_error(str(e.reason)), "status": None}
         except TimeoutError:
-            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "status": None}
 
     @staticmethod
     def _http_get_json(url: str, headers: dict, timeout: int) -> dict:
@@ -87,15 +87,15 @@ class AIEngine:
                 body = e.read().decode("utf-8", "ignore")[:300]
             except Exception:
                 body = ""
-            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}")}
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
         except urllib.error.URLError as e:
             if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
-                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
-            return {"error": friendly_error(str(e.reason))}
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+            return {"error": friendly_error(str(e.reason)), "status": None}
         except TimeoutError:
-            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب"}
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "status": None}
 
     def list_models(self) -> tuple:
         """قائمة النماذج المتاحة من المزوّد المُختار — (ok, models | رسالة)."""
@@ -288,7 +288,7 @@ class AIEngine:
         res = self._http_json(base_url, payload, headers, self._timeout())
         if "error" in res:
             # بعض الواجهات المتوافقة (مثل LM Studio) ترفض response_format بـ HTTP 400 — أعِد المحاولة بدونه
-            if res["error"].startswith("HTTP 400"):
+            if res.get("status") == 400 and "response_format" in payload:
                 payload.pop("response_format", None)
                 res = self._http_json(base_url, payload, headers, self._timeout())
             if "error" in res:
