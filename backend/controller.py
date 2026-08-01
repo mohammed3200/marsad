@@ -45,6 +45,7 @@ class AppController(QObject):
     connectionTested  = Signal(bool, str)
     emailTested       = Signal(bool, str)
     emailSent         = Signal(bool, str)
+    emailSendingChanged = Signal()
     exportDone        = Signal(str)          # path
     exportFailed      = Signal(str)
     reportsChanged    = Signal()
@@ -141,6 +142,11 @@ class AppController(QObject):
     def testingEmail(self):
         """True while an email test is in flight."""
         return self._testing_email
+
+    @Property(bool, notify=emailSendingChanged)
+    def sendingEmail(self):
+        """True while the report email is being sent on a worker thread."""
+        return self._sending_email
 
     @Property(int, constant=True)
     def agentCount(self):
@@ -567,26 +573,42 @@ class AppController(QObject):
             return
         if self._sending_email:
             return
-        self._sending_email = True
-        threading.Thread(target=self._run_send_email, daemon=True).start()
+        self._set_sending_email(True)
+        # Snapshot on the GUI thread — the worker must not re-read self._results
+        # or self._settings later, since clearDashboard()/analysis-done/
+        # saveSettings() can all rebind them to new objects while the SMTP call
+        # is in flight. self._recipients is already the resolved two-tier
+        # (report_recipients, falling back to email_dept_map) list — reusing it
+        # here also keeps that resolution to one source of truth, the same one
+        # that drives the Send button's enabled state in ReportsPage.qml.
+        snapshot = dict(self._results)
+        recipients = list(self._recipients)
+        threading.Thread(target=self._run_send_email,
+                         args=(snapshot, recipients), daemon=True).start()
 
-    def _run_send_email(self):
+    def _run_send_email(self, results, recipients):
         """SMTP on a worker thread — smtplib blocks for the OS TCP timeout."""
         try:
-            recipients = (self._settings.get("report_recipients")
-                          or list(self._settings.get("email_dept_map", {}).keys()))
             if not recipients:
-                self._emailSent.emit(False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات")
+                if not self._shutting_down:
+                    self._emailSent.emit(False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات")
                 return
-            html = build_report_html(self._results)
+            html = build_report_html(results)
             ok = self._hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
-            self._emailSent.emit(
-                bool(ok),
-                "أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد — راجع الإعدادات")
+            if not self._shutting_down:
+                self._emailSent.emit(
+                    bool(ok),
+                    "أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد — راجع الإعدادات")
         except Exception as e:
-            self._emailSent.emit(False, friendly_error(str(e)))
+            # Never let a second emit — against a controller that may already be
+            # torn down if this fires after quit — raise out of a daemon thread.
+            try:
+                if not self._shutting_down:
+                    self._emailSent.emit(False, friendly_error(str(e)))
+            except Exception:
+                pass
         finally:
-            self._sending_email = False
+            self._set_sending_email(False)
 
     @Slot(bool, str)
     def _on_email_sent(self, ok, message):
@@ -949,6 +971,10 @@ class AppController(QObject):
     def _set_testing_email(self, v):
         self._testing_email = v
         self.testingChanged.emit()
+
+    def _set_sending_email(self, v):
+        self._sending_email = v
+        self.emailSendingChanged.emit()
 
     def _load_latest(self):
         if LATEST_F.exists():
