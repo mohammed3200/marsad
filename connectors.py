@@ -449,7 +449,7 @@ class WhatsAppReceiver:
             except Exception as e:
                 log.warning(f"واتساب: خطأ في حدث {kind}: {e}")
 
-    def start(self):
+    def start(self) -> bool:
         import http.server
         recv = self
 
@@ -508,10 +508,16 @@ class WhatsAppReceiver:
                         log.warning(f"واتساب: خطأ في المعالجة: {e}")
                 self._ok()
 
-        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        try:
+            self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        except OSError as e:
+            self.log(f"تعذّر بدء المستقبِل على المنفذ {self.port}: {friendly_error(str(e))}")
+            self._server = None
+            return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         self.log(f"[WA] المستقبِل يعمل على 127.0.0.1:{self.port}")
+        return True
 
     def stop(self):
         if self._server:
@@ -521,6 +527,9 @@ class WhatsAppReceiver:
             except Exception:
                 pass
             self._server = None
+        if self._thread:
+            self._thread.join(timeout=2)
+            self._thread = None
 
 
 # ════════════════════════════════════════════════════
@@ -769,10 +778,18 @@ class ConnectorHub:
         self._log_fn  = print
         self._event_fn = None
         self.whatsapp = None
-        # الرمز يُحفظ في الإعدادات حتى يبقى ثابتاً عند إعادة بناء المحور —
-        # وإلا توقف ملف الجسر المولَّد سابقاً عن العمل (403)
-        self.wa_token = settings.get("whatsapp_token") or secrets.token_hex(16)
-        settings["whatsapp_token"] = self.wa_token
+        # الرمز يُحفظ في الإعدادات فور توليده حتى يبقى ثابتاً عبر عمليات
+        # التشغيل التالية — وإلا وُلِّد رمز مختلف في كل مرة فتوقف ملف الجسر
+        # المولَّد سابقاً عن العمل (403) دون أي سطر سجل يوضّح السبب
+        self.wa_token = settings.get("whatsapp_token") or ""
+        if not self.wa_token:
+            self.wa_token = secrets.token_hex(16)
+            settings["whatsapp_token"] = self.wa_token
+            try:
+                from backend.settings_bridge import save_settings
+                save_settings(settings, changed_keys={"whatsapp_token"})
+            except Exception as e:      # core لا يجوز أن يعتمد على backend اعتماداً صلباً
+                log.warning(f"could not persist whatsapp_token: {e}")
 
     def set_logger(self, fn):
         self._log_fn = fn
@@ -786,15 +803,28 @@ class ConnectorHub:
         groups = self.settings.get("whatsapp_groups", {})
         return groups.get(group_id) or groups.get(str(group_id), "admin")
 
-    def start_whatsapp(self, port: int = 5051):
+    def start_whatsapp(self, port: int = 5051) -> bool:
         """بدء مستقبِل واتساب — الرسائل الواردة تدخل نفس الـ buffer الذي يفرّغه
-        collect_all()، تماماً مثل البريد و ERP."""
+        collect_all()، تماماً مثل البريد و ERP. يُعيد True عند النجاح فقط —
+        مستقبِل لا يستمع لا يبقى مكانه أبداً، حتى تنجح إعادة المحاولة لاحقاً
+        (مثلاً بعد تحرّر المنفذ)."""
+        self.stop_whatsapp()
+        recv = WhatsAppReceiver(port, self._append, self._wa_dept,
+                                self._log_fn, token=self.wa_token,
+                                on_event=self._event_fn)
+        if not recv.start():
+            self.whatsapp = None       # لا يبقى مستقبِل لا يستمع في مكانه
+            return False
+        self.whatsapp = recv
+        return True
+
+    def stop_whatsapp(self):
         if self.whatsapp:
-            self.whatsapp.stop()
-        self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept,
-                                         self._log_fn, token=self.wa_token,
-                                         on_event=self._event_fn)
-        self.whatsapp.start()
+            try:
+                self.whatsapp.stop()
+            except Exception:
+                pass
+            self.whatsapp = None
 
     def _append(self, reports: list):
         with self._lock:

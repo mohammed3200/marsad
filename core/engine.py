@@ -7,6 +7,7 @@ live agent state). The `results` dict keyed by agent id is the contract every
 consumer (exporters, dashboard) reads.
 """
 import json
+import os
 import datetime
 
 from .paths import DATA_DIR
@@ -521,10 +522,21 @@ class AgentsEngine:
         return "\n\n---\n\n".join(parts)
 
     def _save(self, results: dict):
-        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = REPORTS / f"results_{ts}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        latest = REPORTS / "latest.json"
-        with open(latest, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        """Persisting must never destroy a completed analysis."""
+        try:
+            REPORTS.mkdir(parents=True, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            self._write_json(REPORTS / f"results_{ts}.json", results)
+            self._write_json(REPORTS / "latest.json", results)
+        except OSError as e:
+            self.log(f"تعذّر حفظ النتائج: {friendly_error(str(e))}")
+
+    @staticmethod
+    def _write_json(path, payload):
+        """Atomic write — a torn latest.json silently empties the dashboard."""
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
