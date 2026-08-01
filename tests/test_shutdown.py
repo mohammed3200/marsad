@@ -322,6 +322,45 @@ class ShutdownTests(unittest.TestCase):
                               "thread.finished -> worker.deleteLater() is "
                               "missing or broken")
 
+    def test_guard_flag_setters_survive_a_deleted_cpp_object(self):
+        """Regression for a round-2 finding on task 13:
+        `_set_sending_email`/`_set_testing_engine`/`_set_testing_email` are
+        each called from a `finally` block on a daemon thread
+        (`_run_send_email`, `_run_connection_test`, `_run_email_test`). Those
+        threads easily outlive QCoreApplication teardown — `send_report`
+        alone can block for the 20s SMTP timeout plus DNS/starttls/login/
+        sendmail — and a bound method keeps the Python wrapper alive even
+        after PySide6 invalidates the C++ half on shutdown. Calling .emit()
+        on any signal of such an object raises `RuntimeError: Signal source
+        has been deleted`; unguarded in a `finally`, that propagates out of
+        the daemon thread to `threading.excepthook` and prints "Exception in
+        thread Thread-N" — exactly the symptom this task removes.
+
+        Checked with `_shutting_down` both False and True: shutdown() can
+        flip that flag between the setter's own guard check and the .emit()
+        call, so the `try/except RuntimeError` around the emit — not the
+        flag check alone — is the part that must hold."""
+        with isolated_state():
+            for shutting_down in (False, True):
+                for setter, attr in (
+                    (AppController._set_sending_email, "_sending_email"),
+                    (AppController._set_testing_engine, "_testing_engine"),
+                    (AppController._set_testing_email, "_testing_email"),
+                ):
+                    c = AppController()
+                    c._shutting_down = shutting_down
+                    shiboken6.delete(c)  # C++ half gone; Python wrapper lives on
+                    try:
+                        setter(c, True)
+                    except RuntimeError as e:
+                        self.fail(
+                            f"{setter.__name__} raised against a deleted C++ "
+                            f"object (_shutting_down={shutting_down}): {e}")
+                    self.assertTrue(getattr(c, attr),
+                                     f"{setter.__name__} must still update "
+                                     "its Python-side attribute even when "
+                                     "the emit is suppressed")
+
 
 if __name__ == "__main__":
     unittest.main()

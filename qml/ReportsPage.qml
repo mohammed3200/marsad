@@ -205,8 +205,8 @@ PageFrame {
             Layout.fillWidth: true
             spacing: 10
             AppButton {
-                text: "إرسال تقرير بالبريد"; kind: "ghost"
-                enabled: pg.recipCount > 0
+                text: app.sendingEmail ? "جارٍ الإرسال…" : "إرسال تقرير بالبريد"; kind: "ghost"
+                enabled: pg.recipCount > 0 && !app.sendingEmail
                 onClicked: app.sendEmailReport()
             }
             AppButton {

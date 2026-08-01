@@ -145,7 +145,7 @@ class AppController(QObject):
 
     @Property(bool, notify=emailSendingChanged)
     def sendingEmail(self):
-        """True while the report email is being sent on a worker thread."""
+        """صحيح أثناء إرسال تقرير البريد على خيط منفصل."""
         return self._sending_email
 
     @Property(int, constant=True)
@@ -545,6 +545,8 @@ class AppController(QObject):
     def _refresh_recipients(self):
         recips = (self._settings.get("report_recipients")
                   or list(self._settings.get("email_dept_map", {}).keys()))
+        if isinstance(recips, str):
+            recips = [recips]
         self._recipients = list(recips or [])
         self.recipientsChanged.emit()
 
@@ -574,19 +576,21 @@ class AppController(QObject):
         if self._sending_email:
             return
         self._set_sending_email(True)
-        # Snapshot on the GUI thread — the worker must not re-read self._results
-        # or self._settings later, since clearDashboard()/analysis-done/
+        # Snapshot on the GUI thread — the worker must not re-read self._results,
+        # self._settings or self._hub later, since clearDashboard()/analysis-done/
         # saveSettings() can all rebind them to new objects while the SMTP call
-        # is in flight. self._recipients is already the resolved two-tier
-        # (report_recipients, falling back to email_dept_map) list — reusing it
-        # here also keeps that resolution to one source of truth, the same one
-        # that drives the Send button's enabled state in ReportsPage.qml.
+        # is in flight (saveSettings() → _rebuild_hub() rebinds self._hub itself).
+        # self._recipients is already the resolved two-tier (report_recipients,
+        # falling back to email_dept_map) list — reusing it here also keeps that
+        # resolution to one source of truth, the same one that drives the Send
+        # button's enabled state in ReportsPage.qml.
         snapshot = dict(self._results)
         recipients = list(self._recipients)
+        hub = self._hub
         threading.Thread(target=self._run_send_email,
-                         args=(snapshot, recipients), daemon=True).start()
+                         args=(snapshot, recipients, hub), daemon=True).start()
 
-    def _run_send_email(self, results, recipients):
+    def _run_send_email(self, results, recipients, hub):
         """SMTP on a worker thread — smtplib blocks for the OS TCP timeout."""
         try:
             if not recipients:
@@ -594,7 +598,7 @@ class AppController(QObject):
                     self._emailSent.emit(False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات")
                 return
             html = build_report_html(results)
-            ok = self._hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
+            ok = hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
             if not self._shutting_down:
                 self._emailSent.emit(
                     bool(ok),
@@ -966,15 +970,30 @@ class AppController(QObject):
 
     def _set_testing_engine(self, v):
         self._testing_engine = v
-        self.testingChanged.emit()
+        if self._shutting_down:
+            return
+        try:
+            self.testingChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
 
     def _set_testing_email(self, v):
         self._testing_email = v
-        self.testingChanged.emit()
+        if self._shutting_down:
+            return
+        try:
+            self.testingChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
 
     def _set_sending_email(self, v):
         self._sending_email = v
-        self.emailSendingChanged.emit()
+        if self._shutting_down:
+            return
+        try:
+            self.emailSendingChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
 
     def _load_latest(self):
         if LATEST_F.exists():
