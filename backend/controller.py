@@ -372,7 +372,11 @@ class AppController(QObject):
         self._agents.reset_states()
         self.progress.emit(0)
 
-        engine = AgentsEngine(self._ai)
+        # Snapshot settings into a fresh engine so a later saveSettings() cannot
+        # switch the provider mid-run — self._ai/self._settings can be rebound
+        # while this run is still in flight, and the running engine must not
+        # see that change (agents 1..k on one provider, k+1..11 on another).
+        engine = AgentsEngine(AIEngine(dict(self._settings)))
         self._thread = QThread(self)
         self._worker = AnalysisWorker(engine, self._reports.reports())
         self._worker.moveToThread(self._thread)
@@ -727,13 +731,24 @@ class AppController(QObject):
             self.modelsChanged.emit()
 
     def _rebuild_hub(self):
-        try:
-            self._hub.stop_all()
-        except Exception as e:
-            self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
+        # Drain the old hub's buffer before tearing it down — WhatsApp reports
+        # that had already arrived but not yet been collect_all()'d must
+        # survive the rebuild, not be silently discarded with the old hub.
+        pending = []
+        if self._hub:
+            try:
+                pending = self._hub.take_buffer()
+            except Exception:
+                pending = []
+            try:
+                self._hub.stop_all()
+            except Exception as e:
+                self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._hub.set_event_handler(self._wa_event_from_thread)
+        if pending:
+            self._hub.extend_buffer(pending)
         self._start_whatsapp_if_enabled()
 
     @Slot()

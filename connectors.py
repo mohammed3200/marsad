@@ -876,6 +876,16 @@ class ConnectorHub:
             self._log_fn(f"✓ إجمالي التقارير المُجمَّعة: {len(all_reports)}")
         return all_reports
 
+    def take_buffer(self) -> list:
+        """Drain pending reports so a hub rebuild does not discard them."""
+        with self._lock:
+            pending, self._buffer = list(self._buffer), []
+        return pending
+
+    def extend_buffer(self, reports: list) -> None:
+        with self._lock:
+            self._buffer.extend(reports)
+
     def stop_all(self):
         targets = [("البريد", self.email), ("ERP", self.erp)]
         if self.whatsapp:

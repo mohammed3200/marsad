@@ -431,6 +431,7 @@ PageFrame {
         spacing: 12
         AppButton {
             text: "حفظ الإعدادات"; kind: "accent"
+            enabled: !app.busy
             onClicked: pg.doSave()
         }
         Rectangle {
@@ -439,7 +440,8 @@ PageFrame {
             Layout.alignment: Qt.AlignVCenter
         }
         Text {
-            text: pg.dirty ? "تغييرات غير محفوظة" : "كل الإعدادات محفوظة"
+            text: app.busy ? "التحليل قيد التشغيل — تعذّر الحفظ الآن"
+                           : (pg.dirty ? "تغييرات غير محفوظة" : "كل الإعدادات محفوظة")
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
         }
