@@ -11,7 +11,7 @@ import os
 import datetime
 
 from .paths import DATA_DIR
-from .errors import friendly_error
+from .errors import friendly_error, friendly_fs_error
 
 BASE_DIR = DATA_DIR
 REPORTS  = DATA_DIR / "reports"
@@ -522,21 +522,41 @@ class AgentsEngine:
         return "\n\n---\n\n".join(parts)
 
     def _save(self, results: dict):
-        """Persisting must never destroy a completed analysis."""
+        """Persisting must never destroy a completed analysis.
+
+        Broad `except Exception` on purpose: json.dump() itself can raise
+        (e.g. UnicodeEncodeError on an unpaired surrogate an LLM emitted near
+        a truncation boundary — a ValueError, not an OSError), and any such
+        failure here must be logged, not left to escape run_all() and discard
+        a completed 11-agent run.
+        """
         try:
             REPORTS.mkdir(parents=True, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             self._write_json(REPORTS / f"results_{ts}.json", results)
             self._write_json(REPORTS / "latest.json", results)
-        except OSError as e:
-            self.log(f"تعذّر حفظ النتائج: {friendly_error(str(e))}")
+        except Exception as e:
+            self.log(f"تعذّر حفظ النتائج: {friendly_fs_error(e)}")
 
     @staticmethod
     def _write_json(path, payload):
-        """Atomic write — a torn latest.json silently empties the dashboard."""
+        """Atomic write — a torn latest.json silently empties the dashboard.
+
+        On any failure the partial `.tmp` file is removed rather than left
+        behind — an orphan per failed run would otherwise accumulate in the
+        folder the user opens via openReportsFolder, and on a full disk it
+        keeps the space consumed.
+        """
         tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise

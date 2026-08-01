@@ -31,7 +31,7 @@ from pathlib import Path
 
 try:
     from core.paths import DATA_DIR, BUNDLE_DIR
-    from core.errors import friendly_error
+    from core.errors import friendly_error, friendly_fs_error
     from core.status import tier
     LOG_DIR = DATA_DIR / "logs"
 except Exception:  # pragma: no cover — core not importable in isolation
@@ -39,6 +39,8 @@ except Exception:  # pragma: no cover — core not importable in isolation
     LOG_DIR = DATA_DIR / "logs"
     def friendly_error(raw):
         return str(raw)
+    def friendly_fs_error(exc):
+        return str(exc)
     def tier(_literal):
         return "neutral"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -511,7 +513,9 @@ class WhatsAppReceiver:
         try:
             self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
         except OSError as e:
-            self.log(f"تعذّر بدء المستقبِل على المنفذ {self.port}: {friendly_error(str(e))}")
+            # friendly_error() هي لأخطاء مزوّدي الذكاء الاصطناعي عبر الشبكة — تطبيقها
+            # على فشل ربط منفذ محلي (EADDRINUSE) يعطي تشخيصاً مضللاً تماماً
+            self.log(f"تعذّر بدء المستقبِل على المنفذ {self.port}: {friendly_fs_error(e)}")
             self._server = None
             return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)

@@ -4,7 +4,15 @@ friendly_error() يحوّل نصوص الأخطاء الخام (أكواد HTTP�
 المزوّدين) إلى رسالة عربية قصيرة قابلة للفهم والتصرّف. تستخدمه core/engine.py
 و connectors.py — النصوص العربية الجاهزة تمرّ كما هي، والنص الخام لا يصل
 الواجهة أبداً (يُسجَّل في logs/ عند الحاجة).
+
+friendly_error() مبنية لأخطاء مزوّدي الذكاء الاصطناعي (HTTP/JSON عبر الشبكة) —
+تطبيق قواعدها (401→"مفتاح API"، 404→"اسم النموذج"…) على OSError محلي (قرص
+ممتلئ، صلاحيات، منفذ مستخدَم) يعطي تشخيصاً مضللاً تماماً لأنها تبحث عن أنماط
+نصية فرعية بلا أي وعي بالسياق. friendly_fs_error() أدناه مخصّصة لذلك — تُستخدم
+لأي OSError (أو استثناء آخر) من نظام الملفات أو ربط منفذ، وليس من طلب شبكي.
 """
+
+import errno
 
 
 def _has_arabic(text: str) -> bool:
@@ -61,3 +69,28 @@ def friendly_error(raw) -> str:
             return msg
     flat = " ".join(text.split())
     return f"تعذّر الاتصال: {flat[:80]}"
+
+
+_FS_RULES = {
+    errno.EACCES:    "تعذّر الوصول — تحقق من صلاحيات المجلد/الملف",
+    errno.EPERM:     "تعذّر الوصول — تحقق من صلاحيات المجلد/الملف",
+    errno.ENOSPC:    "لا مساحة تخزين كافية على القرص",
+    errno.EROFS:     "المجلد للقراءة فقط — تحقق من صلاحيات القرص",
+    errno.ENOENT:    "المسار غير موجود — تحقق من مجلد الحفظ",
+    errno.EADDRINUSE: "المنفذ مستخدَم بالفعل — غيّر المنفذ في الإعدادات",
+}
+
+
+def friendly_fs_error(exc) -> str:
+    """رسالة عربية لأخطاء نظام الملفات المحلي أو ربط منفذ (OSError وما شابهها) —
+    استخدمها بدلاً من friendly_error() لأي خطأ ليس رد مزوّد عبر الشبكة، حتى لا
+    يُترجَم EACCES/ENOSPC خطأً كـ"مفتاح API غير صالح" أو "اسم النموذج والرابط".
+    """
+    code = getattr(exc, "errno", None)
+    if code in _FS_RULES:
+        return _FS_RULES[code]
+    text = str(exc).strip()
+    if _has_arabic(text):
+        return text
+    flat = " ".join(text.split())
+    return f"خطأ في النظام: {flat[:80]}" if flat else "خطأ غير معروف"
