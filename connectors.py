@@ -578,12 +578,12 @@ _DEPT_KEYWORDS = (
     # (keyword, dept) — order matters: the first match wins
     ("ran", "ran"), ("radio", "ran"), ("راديو", "ran"),
     ("core", "core"), ("network", "core"), ("النواة", "core"),
-    ("quality", "quality"), ("الجودة", "quality"),
+    ("quality", "quality"), ("جودة", "quality"),
     ("safety", "safety"), ("سلامة", "safety"),
     ("civil", "civil"), ("انشاء", "civil"), ("إنشاء", "civil"), ("مدني", "civil"),
     ("cost", "cost"), ("finance", "cost"), ("تكاليف", "cost"), ("تكلفة", "cost"),
-    ("ميزانية", "cost"),
-    ("contract", "contract"), ("عقود", "contract"),
+    ("ميزانية", "cost"), ("مالية", "cost"),
+    ("contract", "contract"), ("عقد", "contract"), ("عقود", "contract"),
     ("procure", "procure"), ("purchase", "procure"), ("مشتريات", "procure"),
     ("supply", "supply"), ("warehouse", "supply"), ("مخازن", "supply"),
     ("توريد", "supply"),
@@ -599,16 +599,48 @@ _DEPT_KEYWORDS = (
 # domain-specific \dG generation-marker rules and is deferred (false negative accepted).
 _WORD_SPLIT = re.compile(r"[^a-z؀-ۿ]+")
 
+# Arabic keywords are matched as whole tokens too, not bare substrings: substring
+# containment let short roots match inside unrelated longer words (معقودة "convened"
+# contains عقد; مجدول "twisted/braided" wire contains جدول). Equality still has to
+# tolerate Arabic affixation — السلامة/بالسلامة must both reach سلامة — so each token
+# has its proclitics stripped before comparison. Multi-letter clusters (بال/وال/
+# فال/كال/لل) come before the single letters they're built from (ب/و/ف/ك/ل) so a
+# token like بالسلامة strips the whole cluster in one pass instead of stopping
+# after just ب.
+_ARABIC_PROCLITICS = ("بال", "وال", "فال", "كال", "لل", "ال", "و", "ب", "ل", "ف", "ك")
+
+# عقد/عقود are a genuine homograph, not a false substring hit: العقد is grammatically
+# identical ("ال" + root) whether the sense is "the contract" or "the decade" (خطة
+# العقد القادم = "next decade's plan"). Affix-stripping can't tell those apart, so
+# these two are compared as bare tokens only — no proclitic stripping — which still
+# catches ordinary contract filenames (عقد_المقاول.pdf, عقود_المقاولين.pdf) since
+# those rarely carry the definite article, while خطة_العقد_القادم.xlsx correctly
+# falls through to admin. No filename in the test set needs the "ال" form of either,
+# so this residual (a definite-article contract filename would be missed) is accepted
+# the same way the 5Gcore digit-glue gap is.
+_NO_STRIP_KEYWORDS = {"عقد", "عقود"}
+
+
+def _strip_arabic_proclitics(token: str) -> str:
+    for p in _ARABIC_PROCLITICS:
+        if token.startswith(p) and len(token) > len(p):
+            return token[len(p):]
+    return token
+
 
 def guess_dept(filename: str) -> str:
     """محاولة تخمين القسم من اسم الملف"""
     stem = str(filename).lower()
     tokens = set(_WORD_SPLIT.split(stem)) - {""}
+    stripped_tokens = {_strip_arabic_proclitics(t) for t in tokens}
     for keyword, dept in _DEPT_KEYWORDS:
         if keyword.isascii():
             if keyword in tokens:
                 return dept
-        elif keyword in stem:          # Arabic: affixes make whole-word matching wrong
+        elif keyword in _NO_STRIP_KEYWORDS:
+            if keyword in tokens:
+                return dept
+        elif keyword in tokens or keyword in stripped_tokens:
             return dept
     return "admin"
 

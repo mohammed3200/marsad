@@ -36,7 +36,9 @@ class GuessDeptTests(unittest.TestCase):
         # Regression for the عقد collision: it should not match in unrelated words
         # معقد (muʿaqqad) = complicated, not a contract
         self.assertEqual(guess_dept("تقرير_معقد.pdf"), "admin")
-        # العقد here means "decade", not singular contract
+        # العقد here means "decade", not singular contract — a genuine homograph
+        # (ال + عقد is identical either way), resolved by matching عقد/عقود as
+        # bare tokens only, never through proclitic-stripped "ال" forms.
         self.assertEqual(guess_dept("خطة_العقد_القادم.xlsx"), "admin")
         # عقدة (ʿuqda) = psychological complex, not a contract
         self.assertEqual(guess_dept("عقدة_نفسية.docx"), "admin")
@@ -54,8 +56,10 @@ class GuessDeptTests(unittest.TestCase):
         # Regression for جودة collision with موجودة (existing)
         # بيانات_موجودة = "existing data"
         self.assertEqual(guess_dept("بيانات_موجودة.xlsx"), "admin")
-        # Positive case: genuine quality reports still route via الجودة (with definite article)
+        # Positive cases: bare جودة, and الجودة via proclitic stripping of "ال"
         self.assertEqual(guess_dept("تقرير_الجودة.pdf"), "quality")
+        self.assertEqual(guess_dept("جودة_المشروع.pdf"), "quality")
+        self.assertEqual(guess_dept("مراقبة_جودة_الخرسانة.pdf"), "quality")
 
     def test_cost_keyword_does_not_match_northern_or_probability(self):
         # Regression for مالية collision with شمالية (northern), احتمالية (probability),
@@ -69,6 +73,40 @@ class GuessDeptTests(unittest.TestCase):
         # Positive case: genuine cost reports still route via more specific keywords
         self.assertEqual(guess_dept("تقرير_التكاليف.xlsx"), "cost")
         self.assertEqual(guess_dept("الميزانية_السنوية.pdf"), "cost")
+        # Restored مالية: matches بare and via "ال"-stripping, without the collisions above
+        self.assertEqual(guess_dept("الشؤون_المالية.pdf"), "cost")
+        self.assertEqual(guess_dept("الموارد_المالية_للمشروع.xlsx"), "cost")
+
+    def test_token_matching_closes_the_whole_collision_class(self):
+        # محضر الجلسة المعقودة = "minutes of the convened meeting" — معقودة is a
+        # different word from عقد (passive participle of عقد "to convene/hold"),
+        # not an affixed form of it, so token equality rejects it.
+        self.assertEqual(guess_dept("محضر_الجلسة_المعقودة.pdf"), "admin")
+        # اجتماع غير معقود = "meeting not held"
+        self.assertEqual(guess_dept("اجتماع_غير_معقود.pdf"), "admin")
+        # حبل مجدول = "twisted/braided rope" (reinforcement wire) — مجدول is a
+        # different word from جدول, not جدول with a proclitic prefix.
+        self.assertEqual(guess_dept("حبل_مجدول.pdf"), "admin")
+        self.assertEqual(guess_dept("خيط_مجدول_للتسليح.docx"), "admin")
+
+    def test_contract_keyword_restored_and_safe(self):
+        # عقود (plural) — unambiguous, matches directly.
+        self.assertEqual(guess_dept("عقود_المقاولين.pdf"), "contract")
+        # Singular عقد as a bare token (no definite article) — the ordinary way a
+        # contract filename is named — routes correctly.
+        self.assertEqual(guess_dept("عقد_المقاول_الرئيسي.pdf"), "contract")
+
+    def test_safety_keyword_affixed_forms(self):
+        self.assertEqual(guess_dept("السلامة_اليومي.txt"), "safety")
+        # بالسلامة ("بال" proclitic cluster + سلامة) — "commitment to safety"
+        self.assertEqual(guess_dept("الالتزام_بالسلامة.pdf"), "safety")
+
+    def test_civil_keyword_spelling_variants(self):
+        self.assertEqual(guess_dept("إنشاء_الأبراج.docx"), "civil")
+        self.assertEqual(guess_dept("انشاء_الأبراج.docx"), "civil")
+
+    def test_schedule_keyword_with_definite_article(self):
+        self.assertEqual(guess_dept("الجدول_الزمني.xlsx"), "schedule")
 
 
 class IngestTests(unittest.TestCase):
