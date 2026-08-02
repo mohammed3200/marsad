@@ -256,7 +256,8 @@ class AppController(QObject):
             self.reportsChanged.emit()
             self.notify.emit(f"حُمّلت {len(reps)} تقارير نموذجية")
         except Exception as e:
-            self.notify.emit(f"تعذّر تحميل النماذج: {e}")
+            log.warning("sample load failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر تحميل النماذج: {friendly_fs_error(e)}")
 
     @Slot()
     def collectReports(self):
@@ -695,7 +696,8 @@ class AppController(QObject):
         try:
             save_settings(merged, changed_keys=set(values.keys()) if values else None)
         except Exception as e:
-            self.notify.emit(f"تعذّر حفظ الإعدادات: {e}")
+            log.warning("settings save failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر حفظ الإعدادات: {friendly_fs_error(e)}")
             return
         self._settings = merged
         self._ai.settings = self._settings
@@ -810,11 +812,13 @@ class AppController(QObject):
             try:
                 self._hub.stop_all()
             except Exception as e:
-                self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
+                log.warning("connector hub stop failed: %s", e, exc_info=True)
+                self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {friendly_fs_error(e)}")
             try:
                 pending = self._hub.take_buffer()
             except Exception as e:
-                self.logMessage.emit(f"تعذّر نقل التقارير المعلّقة — {e}")
+                log.warning("connector hub buffer handoff failed: %s", e, exc_info=True)
+                self.logMessage.emit(f"تعذّر نقل التقارير المعلّقة — {friendly_fs_error(e)}")
                 pending = []
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
@@ -888,7 +892,8 @@ class AppController(QObject):
             self._hub.start_whatsapp(port)
             self.logMessage.emit(f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
         except Exception as e:
-            self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {e}")
+            log.warning("whatsapp receiver bind failed: %s", e, exc_info=True)
+            self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {friendly_fs_error(e)}")
 
     @Slot()
     def generateWhatsAppBridge(self):
@@ -899,7 +904,8 @@ class AppController(QObject):
             path = WhatsAppHelper.save_bridge_file(port, token=token)
             self.notify.emit(f"أُنشئ ملف الجسر: {path}")
         except Exception as e:
-            self.notify.emit(f"تعذّر إنشاء الجسر: {e}")
+            log.warning("whatsapp bridge file generation failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر إنشاء الجسر: {friendly_fs_error(e)}")
 
     @Slot()
     def checkNode(self):
@@ -934,7 +940,8 @@ class AppController(QObject):
                 self._hub.start_whatsapp(port)
                 self.logMessage.emit(f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
             except Exception as e:
-                self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {e}")
+                log.warning("whatsapp receiver bind failed: %s", e, exc_info=True)
+                self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {friendly_fs_error(e)}")
         self._wa_starting = True
         self.waChanged.emit()
         threading.Thread(target=self._run_bridge_start, daemon=True).start()
@@ -975,7 +982,8 @@ class AppController(QObject):
         except FileNotFoundError:
             self.notify.emit("Node.js غير مثبّت — ثبّته أولاً من الخطوة 2")
         except Exception as e:
-            self.notify.emit(f"تعذّر تشغيل الجسر: {e}")
+            log.warning("whatsapp bridge start failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر تشغيل الجسر: {friendly_fs_error(e)}")
         finally:
             self._wa_starting = False
             self.waChanged.emit()
@@ -1033,7 +1041,8 @@ class AppController(QObject):
             self.notify.emit("حزمة qrcode غير مثبّتة — ثبّت متطلبات التطبيق: pip install -r requirements.txt")
             return []
         except Exception as e:
-            self.logMessage.emit(f"تعذّر توليد رمز QR: {e}")
+            log.warning("QR matrix generation failed: %s", e, exc_info=True)
+            self.logMessage.emit(f"تعذّر توليد رمز QR: {friendly_fs_error(e)}")
             return []
 
     # ───────────────────────── dashboard ─────────────────────────
@@ -1044,7 +1053,8 @@ class AppController(QObject):
             if LATEST_F.exists():
                 LATEST_F.unlink()
         except Exception as e:
-            self.logMessage.emit(f"تعذّر حذف ملف النتائج الأخيرة — {e}")
+            log.warning("latest-results delete failed: %s", e, exc_info=True)
+            self.logMessage.emit(f"تعذّر حذف ملف النتائج الأخيرة — {friendly_fs_error(e)}")
         self._results, self._dash = {}, {}
         self._date = ""
         self.dashModelChanged.emit()

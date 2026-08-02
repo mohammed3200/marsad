@@ -271,7 +271,8 @@ class AppService:
             self._emit("notify", message=f"حُمّلت {len(reps)} تقارير نموذجية")
             return len(reps)
         except Exception as e:
-            self._emit("notify", message=f"تعذّر تحميل النماذج: {e}")
+            log.warning("sample load failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر تحميل النماذج: {friendly_fs_error(e)}")
             return 0
 
     def collect_reports(self):
@@ -287,7 +288,8 @@ class AppService:
         try:
             reps = self._hub.collect_all()
         except Exception as e:
-            self._emit("notify", message=f"تعذّر الجمع: {e}")
+            log.warning("report collection failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر الجمع: {friendly_error(str(e))}")
             self._collecting = False
             return
         self._collecting = False
@@ -419,7 +421,8 @@ class AppService:
             if LATEST_F.exists():
                 LATEST_F.unlink()
         except Exception as e:
-            self._emit("log", message=f"تعذّر حذف ملف النتائج الأخيرة — {e}")
+            log.warning("latest-results delete failed: %s", e, exc_info=True)
+            self._emit("log", message=f"تعذّر حذف ملف النتائج الأخيرة — {friendly_fs_error(e)}")
         with self._lock:
             self._results, self._dash = {}, {}
             self._date = ""
@@ -490,7 +493,8 @@ class AppService:
             save_settings(self._settings,
                           changed_keys=set(values.keys()) if values else None)
         except Exception as e:
-            self._emit("notify", message=f"تعذّر حفظ الإعدادات: {e}")
+            log.warning("settings save failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر حفظ الإعدادات: {friendly_fs_error(e)}")
             return
         self._ai.settings = self._settings
         # الموصّلات تلتقط الإعدادات عند الإنشاء — أعد بناء الـ hub حتى تسري
@@ -505,7 +509,8 @@ class AppService:
         try:
             self._hub.stop_all()
         except Exception as e:
-            self._emit("log", message=f"تعذّر إيقاف الموصّلات السابقة — {e}")
+            log.warning("connector hub stop failed: %s", e, exc_info=True)
+            self._emit("log", message=f"تعذّر إيقاف الموصّلات السابقة — {friendly_fs_error(e)}")
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self._emit("log", message=str(m)))
         self._hub.set_event_handler(self._on_wa_event)
@@ -586,7 +591,8 @@ class AppService:
             self._hub.start_whatsapp(port)
             self._emit("log", message=f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
         except Exception as e:
-            self._emit("log", message=f"واتساب: تعذّر بدء المستقبِل — {e}")
+            log.warning("whatsapp receiver bind failed: %s", e, exc_info=True)
+            self._emit("log", message=f"واتساب: تعذّر بدء المستقبِل — {friendly_fs_error(e)}")
 
     def generate_whatsapp_bridge(self):
         """Returns (ok, path_or_error)."""
@@ -685,7 +691,8 @@ class AppService:
                 self._hub.start_whatsapp(port)
                 self._emit("log", message=f"واتساب: مستقبِل الرسائل يعمل على المنفذ {port}")
             except Exception as e:
-                self._emit("log", message=f"واتساب: تعذّر بدء المستقبِل — {e}")
+                log.warning("whatsapp receiver bind failed: %s", e, exc_info=True)
+                self._emit("log", message=f"واتساب: تعذّر بدء المستقبِل — {friendly_fs_error(e)}")
         self._wa_starting = True
         self._emit_wa_status()
         threading.Thread(target=self._run_bridge_start, daemon=True).start()
@@ -728,7 +735,8 @@ class AppService:
         except FileNotFoundError:
             self._emit("notify", message="Node.js غير مثبّت — ثبّته أولاً")
         except Exception as e:
-            self._emit("notify", message=f"تعذّر تشغيل الجسر: {e}")
+            log.warning("whatsapp bridge start failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر تشغيل الجسر: {friendly_fs_error(e)}")
         self._wa_starting = False
         self._emit_wa_status()
 
@@ -784,7 +792,8 @@ class AppService:
             self._emit("notify", message="حزمة qrcode غير مثبّتة — ثبّت متطلبات التطبيق: pip install -r requirements.txt")
             return []
         except Exception as e:
-            self._emit("log", message=f"تعذّر توليد رمز QR: {e}")
+            log.warning("QR matrix generation failed: %s", e, exc_info=True)
+            self._emit("log", message=f"تعذّر توليد رمز QR: {friendly_fs_error(e)}")
             return []
 
     # ───────────────────────── internals ─────────────────────────
