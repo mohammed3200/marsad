@@ -6,18 +6,25 @@ still be caught:
 
 1. runAnalysis() must build the live engine from a *copy* of settings
    (AIEngine(dict(self._settings))), never self._ai / self._settings
-   directly — or a settings save that lands mid-run (any caller: the save
-   button, "حفظ كملف", the test/fetch buttons that save-before-testing, or
-   switchEngineProfile()) can switch the AI provider partway through a run,
-   splitting one analysis across two backends.
+   directly, and nothing that later mutates self._settings in place (a
+   direct assignment, not just a saveSettings() call — saveSettings() is
+   now gated on self._busy and never mutates in place anyway, so calling it
+   alone doesn't exercise this) may reach the running engine's snapshot.
 2. _rebuild_hub() must hand the outgoing hub's pending buffer to the new
-   hub — or a settings save silently discards WhatsApp reports that had
-   already arrived but had not yet been collect_all()'d.
+   hub, and must do so in stop-then-drain order specifically — draining
+   first can lose a report a WhatsAppReceiver request handler thread
+   appends *while* stop_all() is shutting it down (ThreadingHTTPServer runs
+   daemon_threads=True, so stop() does not join in-flight handler threads).
 
 See .superpowers/sdd/2026-07-28-launch-readiness/task-16-report.md for the
-full history (including the round-1 review that added
-AppController.saveSettings()'s own busy-gate and reordered _rebuild_hub to
-stop the old hub before draining it).
+full history — including the round-1 review (saveSettings()'s own busy-gate,
+the stop-then-drain reorder in _rebuild_hub) and the round-2 review that
+corrected both tests below: round-1's buffer test seeded the buffer before
+the save and so passed against either drain ordering (it never actually
+pinned the reorder), and round-1's mutation leg called saveSettings() —
+which the same commit had just gated on self._busy, and which never mutates
+self._settings in place regardless — so only the identity assertion taken
+*before* that call was ever load-bearing.
 """
 import os
 import sys
@@ -66,7 +73,7 @@ class RunAnalysisSettingsSnapshotTests(unittest.TestCase):
     def setUp(self):
         _app()
 
-    def test_a_mid_run_save_cannot_reach_the_running_engines_settings(self):
+    def test_a_mid_run_mutation_of_settings_cannot_reach_the_running_engine(self):
         with isolated_state():
             c = AppController()
             self.addCleanup(c.deleteLater)
@@ -99,12 +106,21 @@ class RunAnalysisSettingsSnapshotTests(unittest.TestCase):
                                  "test fixture assumption broken — pick a "
                                  "default that differs from the probe value")
 
-            c.saveSettings({"ai_backend": "claude"})
+            # Model the hazard directly rather than through a specific
+            # caller (a saveSettings() call is inert here twice over: this
+            # commit gates it on self._busy, and it never mutates
+            # self._settings in place regardless of that gate). Before this
+            # task's round-2 fix, switchEngineProfile() did exactly this —
+            # assigned into self._settings in place — ahead of a
+            # saveSettings({}) call; this reproduces that shape directly so
+            # the test still means something even though that call site no
+            # longer does it.
+            c._settings["ai_backend"] = "claude"
 
             self.assertEqual(
                 engine.ai.settings["ai_backend"], original_backend,
-                "a settings save while the analysis was running mutated "
-                "the in-flight engine's provider")
+                "a settings mutation while the analysis was running "
+                "reached the in-flight engine's provider")
             self.assertIsNot(engine.ai.settings, c._settings)
 
 
@@ -112,25 +128,59 @@ class RebuildHubBufferHandoffTests(unittest.TestCase):
     def setUp(self):
         _app()
 
-    def test_save_settings_carries_the_pending_buffer_to_the_new_hub(self):
+    def test_a_report_that_arrives_while_the_old_hub_is_stopping_survives(self):
+        """Discriminates the drain order, unlike a buffer seeded before the
+        save (which drains identically either way). _LateAppendHub models
+        WhatsAppReceiver's real behaviour under ThreadingHTTPServer with
+        daemon_threads=True: a request accepted before stop_all() runs can
+        still call the append callback *during* shutdown, i.e. its report
+        lands in the buffer only once stop_all() is already underway — take
+        this at any earlier point and it's missed. Draining before stopping
+        (the round-1 order, per the brief) fails this; stopping before
+        draining (the round-2 fix) passes it."""
+        class _LateAppendHub:
+            def __init__(self, late):
+                self._buf, self._late = [], late
+
+            def take_buffer(self):
+                b, self._buf = list(self._buf), []
+                return b
+
+            def extend_buffer(self, reports):
+                self._buf.extend(reports)
+
+            def stop_all(self):
+                # Models a request handler thread that's still in flight
+                # when stop_all() is called — it appends *during* shutdown,
+                # not before it.
+                self._buf.append(self._late)
+
+            def set_logger(self, fn):
+                pass
+
+            def set_event_handler(self, fn):
+                pass
+
         with isolated_state():
             c = AppController()
             self.addCleanup(c.deleteLater)
 
-            report = {"source": "whatsapp", "dept": "ops", "from": "+2001234",
-                      "date": "2026-07-28", "content": "تقرير من واتساب"}
-            old_hub = c._hub
-            old_hub.extend_buffer([report])
+            late_report = {"source": "whatsapp", "dept": "ops",
+                           "from": "+2001234", "date": "2026-07-28",
+                           "content": "تقرير متأخر أثناء الإيقاف"}
+            c._hub = _LateAppendHub(late_report)
 
             c.saveSettings({})
 
-            self.assertIsNot(c._hub, old_hub,
-                              "saveSettings() must rebuild the hub — test "
-                              "setup assumption broken")
+            self.assertNotIsInstance(
+                c._hub, _LateAppendHub,
+                "saveSettings() must rebuild the hub — test setup "
+                "assumption broken")
             self.assertEqual(
-                c._hub.take_buffer(), [report],
-                "_rebuild_hub() discarded a WhatsApp report that had "
-                "already arrived but had not yet been collect_all()'d")
+                c._hub.take_buffer(), [late_report],
+                "a report that arrived while the old hub was stopping was "
+                "lost — _rebuild_hub() must stop_all() the old hub before "
+                "take_buffer()'ing it, not after")
 
 
 if __name__ == "__main__":

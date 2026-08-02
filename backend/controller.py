@@ -700,6 +700,14 @@ class AppController(QObject):
     @Slot(str)
     def saveEngineProfile(self, name):
         """احفظ مفاتيح المحرّك الحالية كملف مُسمّى (الافتراضي يبقى Ollama)."""
+        # Same gate as saveSettings(), and for the same reason: this writes
+        # settings.json directly (save_settings(), not through saveSettings())
+        # and its snapshot of the *current* engine keys would otherwise be
+        # taken and persisted while a run is in flight — mid-run, that's a
+        # stale-data write, not just an untimely one.
+        if self._busy:
+            self.notify.emit("التحليل قيد التشغيل — تعذّر الحفظ الآن")
+            return
         name = (name or "").strip()
         if not name:
             self.notify.emit("أدخل اسماً للملف أولاً")
@@ -716,18 +724,31 @@ class AppController(QObject):
 
     @Slot(str)
     def switchEngineProfile(self, name):
-        """فعّل ملفاً محفوظاً — تُنسخ مفاتيحه إلى الإعدادات وتسري فوراً."""
+        """فعّل ملفاً محفوظاً — تُنسخ مفاتيحه إلى الإعدادات وتسري فوراً.
+
+        Routed entirely through saveSettings() rather than mutating
+        self._settings in place first: self._ai holds self._settings by
+        reference, so an in-place mutation followed by a saveSettings({})
+        that saveSettings's own busy-gate then refuses left the interactive
+        engine, the visible form fields and settings.json disagreeing —
+        engine already switched, file still holding the old profile, and no
+        dirty indicator ever warned about it. Building the changed-keys dict
+        first and handing it to saveSettings() in one call makes the whole
+        switch atomic: either it all lands (settings.json, self._settings,
+        self._ai) or none of it does."""
         for p in self._settings.get("engine_profiles", []):
             if p.get("name") == name:
-                for k in ENGINE_KEYS:
-                    if k in p:
-                        self._settings[k] = p[k]
-                self.saveSettings({})
+                self.saveSettings({k: p[k] for k in ENGINE_KEYS if k in p})
                 return
         self.notify.emit("الملف غير موجود")
 
     @Slot(str)
     def deleteEngineProfile(self, name):
+        # Same as saveEngineProfile(): this writes settings.json directly,
+        # bypassing saveSettings()'s gate entirely, so it needs its own.
+        if self._busy:
+            self.notify.emit("التحليل قيد التشغيل — تعذّر الحفظ الآن")
+            return
         profiles = [p for p in self._settings.get("engine_profiles", [])
                     if p.get("name") != name]
         self._settings["engine_profiles"] = profiles

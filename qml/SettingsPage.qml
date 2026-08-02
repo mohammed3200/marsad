@@ -171,6 +171,7 @@ PageFrame {
         AppButton {
             text: "حذف الملف"; kind: "ghost"; Layout.alignment: Qt.AlignBottom
             visible: profileC.currentIndex > 0
+            enabled: !app.busy
             onClicked: { app.deleteEngineProfile(profileC.options[profileC.currentIndex]); profileC.currentIndex = 0 }
         }
     }
@@ -180,6 +181,7 @@ PageFrame {
         FormField { id: profileName; label: "احفظ الإعداد الحالي كملف"; placeholder: "مثال: Gemini العمل" }
         AppButton {
             text: "حفظ كملف"; kind: "ghost"; Layout.alignment: Qt.AlignBottom
+            enabled: !app.busy
             onClicked: { app.saveSettings(pg.collectSettings()); app.saveEngineProfile(profileName.text); profileName.text = "" }
         }
     }
@@ -256,7 +258,7 @@ PageFrame {
         spacing: 10
         AppButton {
             text: app.modelsBusy ? "جارٍ الجلب…" : "جلب قائمة النماذج"; kind: "ghost"
-            enabled: !app.modelsBusy
+            enabled: !app.modelsBusy && !app.busy
             onClicked: { app.saveSettings(pg.collectSettings()); app.fetchModels() }
         }
         FormCombo {
@@ -272,7 +274,7 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
-        AppButton { text: "اختبار المحرّك"; kind: "ghost"; enabled: !app.testingEngine
+        AppButton { text: "اختبار المحرّك"; kind: "ghost"; enabled: !app.testingEngine && !app.busy
             onClicked: { app.saveSettings(pg.collectSettings()); pg.testState = 2; pg.testMsg = "جارٍ الفحص…"; app.testConnection() } }
         Rectangle {
             width: 8; height: 8; radius: 4
@@ -310,7 +312,7 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 12
-        AppButton { text: "اختبار البريد"; kind: "ghost"; enabled: !app.testingEmail
+        AppButton { text: "اختبار البريد"; kind: "ghost"; enabled: !app.testingEmail && !app.busy
             onClicked: { app.saveSettings(pg.collectSettings()); pg.emailState = 2; pg.emailMsg = "جارٍ الفحص…"; app.testEmail() } }
         Rectangle {
             width: 8; height: 8; radius: 4
