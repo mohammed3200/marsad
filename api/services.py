@@ -13,16 +13,20 @@ wa_qr, wa_status.
 """
 import datetime
 import json
+import logging
 import threading
 from pathlib import Path
 
 from core import (AIEngine, AgentsEngine, ContactsDB, WORKER_AGENTS,
                   export_pdf, export_excel)
+from core.errors import friendly_error, friendly_fs_error
 from core.hijri import dual_label
 from core.paths import DATA_DIR, BUNDLE_DIR
 from connectors import (ConnectorHub, WhatsAppHelper, build_report_html,
                         read_file_to_report)
 from backend.settings_bridge import load_settings, save_settings
+
+log = logging.getLogger(__name__)
 
 REPORTS   = DATA_DIR / "reports"                  # writable output
 SAMPLES_F = BUNDLE_DIR / "sample_reports.json"    # shipped demo input
@@ -389,8 +393,10 @@ class AppService:
             )
         except Exception as e:  # surface any failure like analysisFailed
             self._set_busy(False)
-            self._emit("analysis_failed", error=str(e))
-            self._emit("notify", message=f"فشل التحليل: {e}")
+            log.warning("analysis failed: %s", e, exc_info=True)
+            msg = friendly_error(str(e))
+            self._emit("analysis_failed", error=msg)
+            self._emit("notify", message=f"فشل التحليل: {msg}")
             return
         with self._lock:
             self._results = results or {}
@@ -442,9 +448,11 @@ class AppService:
             self._emit("notify", message=f"حُفظ الملف: {out}")
             return True, out
         except Exception as e:
-            self._emit("export_failed", error=str(e))
-            self._emit("notify", message=f"تعذّر التصدير: {e}")
-            return False, str(e)
+            log.warning("export failed: %s", e, exc_info=True)
+            msg = friendly_fs_error(e)
+            self._emit("export_failed", error=msg)
+            self._emit("notify", message=f"تعذّر التصدير: {msg}")
+            return False, msg
 
     def send_email_report(self):
         """Returns (ok, message)."""
@@ -463,8 +471,10 @@ class AppService:
             self._emit("notify", message=msg)
             return ok, msg
         except Exception as e:
-            self._emit("notify", message=f"خطأ في الإرسال: {e}")
-            return False, str(e)
+            log.warning("email send failed: %s", e, exc_info=True)
+            msg = friendly_error(str(e))
+            self._emit("notify", message=f"خطأ في الإرسال: {msg}")
+            return False, msg
 
     # ───────────────────────── settings / connection ─────────────────────────
     def save_settings(self, values):
@@ -514,7 +524,8 @@ class AppService:
         try:
             ok, msg = self._ai.test_connection()
         except Exception as e:
-            ok, msg = False, str(e)
+            log.warning("connection test failed: %s", e, exc_info=True)
+            ok, msg = False, friendly_error(str(e))
         self._online = ok
         self._status = "متصل" if ok else "غير متصل"
         self._emit("engine_changed", online=self._online, status=self._status)
@@ -534,7 +545,8 @@ class AppService:
         try:
             ok, msg = self._hub.test_email()
         except Exception as e:
-            ok, msg = False, str(e)
+            log.warning("email test failed: %s", e, exc_info=True)
+            ok, msg = False, friendly_error(str(e))
         # الرسالة تظهر في موضعها (email_tested) — لا تُكرَّر كحدث notify فوقها
         self._emit("email_tested", ok=ok, message=msg)
         self._set_testing(engine=False, value=False)
@@ -585,8 +597,10 @@ class AppService:
             self._emit("notify", message=f"أُنشئ ملف الجسر: {path}")
             return True, path
         except Exception as e:
-            self._emit("notify", message=f"تعذّر إنشاء الجسر: {e}")
-            return False, str(e)
+            log.warning("whatsapp bridge file generation failed: %s", e, exc_info=True)
+            msg = friendly_fs_error(e)
+            self._emit("notify", message=f"تعذّر إنشاء الجسر: {msg}")
+            return False, msg
 
     def check_node(self):
         """Returns (ok, message)."""
@@ -647,7 +661,8 @@ class AppService:
         try:
             ok, out = self._ai.list_models()
         except Exception as e:
-            ok, out = False, str(e)
+            log.warning("model list fetch failed: %s", e, exc_info=True)
+            ok, out = False, friendly_error(str(e))
         models = list(out) if ok and isinstance(out, list) else []
         with self._lock:
             self._models = models

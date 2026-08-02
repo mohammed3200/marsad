@@ -6,6 +6,7 @@ slots. Analysis runs on a worker thread; results flow back via signals.
 """
 import json
 import datetime
+import logging
 import threading
 from pathlib import Path
 
@@ -14,11 +15,13 @@ from PySide6.QtGui import QDesktopServices
 
 from core import AIEngine, AgentsEngine, ContactsDB, export_pdf, export_excel, WORKER_AGENTS
 from core.paths import DATA_DIR, BUNDLE_DIR
-from core.errors import friendly_error
+from core.errors import friendly_error, friendly_fs_error
 from connectors import ConnectorHub, build_report_html, read_file_to_report
 from .settings_bridge import load_settings, save_settings
 from .models import AgentsModel, ReportsModel
 from .analysis_worker import AnalysisWorker
+
+log = logging.getLogger(__name__)
 
 REPORTS    = DATA_DIR / "reports"                  # writable output
 SAMPLES_F  = BUNDLE_DIR / "sample_reports.json"    # shipped demo input
@@ -542,8 +545,10 @@ class AppController(QObject):
             self.exportDone.emit(out)
             self.notify.emit(f"حُفظ الملف: {out}")
         except Exception as e:
-            self.exportFailed.emit(str(e))
-            self.notify.emit(f"تعذّر التصدير: {e}")
+            log.warning("export failed: %s", e, exc_info=True)
+            msg = friendly_fs_error(e)
+            self.exportFailed.emit(msg)
+            self.notify.emit(f"تعذّر التصدير: {msg}")
 
     @Slot()
     def openReportsFolder(self):
@@ -663,7 +668,8 @@ class AppController(QObject):
             try:
                 ok, msg = self._ai.test_connection()
             except Exception as e:
-                ok, msg = False, str(e)
+                log.warning("connection test failed: %s", e, exc_info=True)
+                ok, msg = False, friendly_error(str(e))
             self._online = ok
             self._status = "متصل" if ok else "غير متصل"
             self.engineChanged.emit()
@@ -776,7 +782,8 @@ class AppController(QObject):
             try:
                 ok, out = self._ai.list_models()
             except Exception as e:
-                ok, out = False, str(e)
+                log.warning("model list fetch failed: %s", e, exc_info=True)
+                ok, out = False, friendly_error(str(e))
             self._models = list(out) if ok and isinstance(out, list) else []
             if self._models:
                 self.notify.emit(f"جُلبت {len(self._models)} نموذجاً")
@@ -829,7 +836,8 @@ class AppController(QObject):
             try:
                 ok, msg = self._hub.test_email()
             except Exception as e:
-                ok, msg = False, str(e)
+                log.warning("email test failed: %s", e, exc_info=True)
+                ok, msg = False, friendly_error(str(e))
             # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
             self.emailTested.emit(ok, msg)
         finally:
