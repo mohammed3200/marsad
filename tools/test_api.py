@@ -10,6 +10,7 @@ The tests exercise the input queue, samples, dashboard, contacts, and settings
 endpoints. They rely on the singleton AppService in api/app.py.
 """
 import os
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -24,17 +25,37 @@ os.environ["MARSAD_API_ENABLE"] = "1"
 
 from fastapi.testclient import TestClient
 
-from api.app import app, service
+from tests._isolation import isolated_state
 
 
 class ApiSmokeTests(unittest.TestCase):
+    # This suite MUST run under isolated_state(), entered here in setUpClass
+    # before api.app is ever imported. api.app builds its AppService
+    # singleton at import time (`service = AppService()`), and that
+    # singleton's clear_dashboard() unlinks reports/latest.json outright —
+    # against the real DATA_DIR, that means any run that never reaches
+    # tearDownClass (a crash, Ctrl-C, a timeout, an OOM kill) permanently
+    # destroys the developer's last analysis, with no recovery, because
+    # reports/latest.json is gitignored. That is not hypothetical: an
+    # earlier hand-rolled backup/restore version of this file did exactly
+    # that. isolated_state() redirects every writable-state path (settings,
+    # reports, contacts) into a throwaway temp directory for the life of the
+    # class, so there is nothing real left to destroy — do not revert to
+    # touching the real DATA_DIR here.
     @classmethod
     def setUpClass(cls):
+        cls._iso = isolated_state()
+        cls._root = cls._iso.__enter__()
+        global app, service
+        from api.app import app, service
+        # isolated_state() deliberately leaves SAMPLES_F pointing at a path
+        # that doesn't exist (other suites exercise that failure path) — this
+        # suite's test_samples_and_clear exercises the success path via
+        # POST /api/reports/samples, so seed the isolated location with a
+        # copy of the real sample_reports.json (never written to; read-only).
+        import api.services as svc
+        shutil.copy(ROOT / "sample_reports.json", svc.SAMPLES_F)
         cls.client = TestClient(app)
-        # clear_dashboard() deletes reports/latest.json — preserve the user's
-        # real dashboard data around the suite and restore it afterwards.
-        from api.services import LATEST_F
-        cls._latest_backup = LATEST_F.read_bytes() if LATEST_F.exists() else None
         # Start each run with a clean report queue.
         service.clear_reports()
         service.clear_dashboard()
@@ -43,9 +64,7 @@ class ApiSmokeTests(unittest.TestCase):
     def tearDownClass(cls):
         service.clear_reports()
         service.clear_dashboard()
-        if cls._latest_backup is not None:
-            from api.services import LATEST_F
-            LATEST_F.write_bytes(cls._latest_backup)
+        cls._iso.__exit__(None, None, None)
 
     def test_meta(self):
         r = self.client.get("/api/meta")
