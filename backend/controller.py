@@ -84,6 +84,7 @@ class AppController(QObject):
         self._sending_email = False
         self._thread   = None
         self._worker   = None
+        self._run_settings = None   # settings snapshot for the in-flight run, if any
         self._shutting_down = False
         self._collected.connect(self._on_collected)
         self._filesAdded.connect(self._on_files_added)
@@ -376,7 +377,16 @@ class AppController(QObject):
         # switch the provider mid-run — self._ai/self._settings can be rebound
         # while this run is still in flight, and the running engine must not
         # see that change (agents 1..k on one provider, k+1..11 on another).
-        engine = AgentsEngine(AIEngine(dict(self._settings)))
+        # Stash the same snapshot as self._run_settings so
+        # _shutdown_wait_budget_ms() waits on *this* run's ai_timeout: without
+        # it, a shorter ai_timeout typed into Settings after the run started
+        # (and saved via one of the still-ungated test/fetch buttons) would
+        # shrink shutdown()'s wait budget below what the in-flight call can
+        # actually block for, reintroducing the "wait() times out, thread
+        # left running" failure task 12 removed.
+        run_settings = dict(self._settings)
+        engine = AgentsEngine(AIEngine(run_settings))
+        self._run_settings = run_settings
         self._thread = QThread(self)
         self._worker = AnalysisWorker(engine, self._reports.reports())
         self._worker.moveToThread(self._thread)
@@ -426,6 +436,7 @@ class AppController(QObject):
         # object) — calling deleteLater() again on it raises
         # "Internal C++ object already deleted". Just drop the Python ref.
         self._worker = None
+        self._run_settings = None
 
     def _shutdown_wait_budget_ms(self) -> int:
         """How long shutdown() will block waiting for a live analysis thread
@@ -437,9 +448,18 @@ class AppController(QObject):
         synchronous urlopen bounded by ai_timeout, not by anything shorter.
         So the budget must be at least one full ai_timeout, not the original
         code's flat 5s (which timed out on essentially every quit during a
-        live analysis — see task-12-findings-r1.md, Critical 1)."""
+        live analysis — see task-12-findings-r1.md, Critical 1).
+
+        Prefer self._run_settings (the snapshot runAnalysis() built the live
+        engine from) over self._settings while a run is in flight: since that
+        snapshot decouples the running engine from later settings saves, the
+        two can now legitimately disagree on ai_timeout — waiting on the
+        *live* settings' value here would size the budget for a timeout the
+        in-flight call was never bound by, under- or over-shooting the wait
+        needed to observe should_stop actually take effect."""
+        settings = self._run_settings if (self._busy and self._run_settings) else self._settings
         try:
-            ai_timeout = int(self._settings.get("ai_timeout", 180))
+            ai_timeout = int(settings.get("ai_timeout", 180))
         except (TypeError, ValueError):
             ai_timeout = 180
         return (max(ai_timeout, 5) + 5) * 1000
@@ -647,6 +667,15 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def saveSettings(self, values):
+        # Gated here, not just in QML: the sticky-footer save button is not
+        # the only caller — "حفظ كملف"، "جلب قائمة النماذج"، «اختبار المحرّك»
+        # and «اختبار البريد» all call app.saveSettings() first (so the test
+        # reflects what's on screen), and switchEngineProfile() calls it too.
+        # A single gate here covers every current and future caller instead
+        # of five separate QML `enabled:` bindings that are easy to miss one of.
+        if self._busy:
+            self.notify.emit("التحليل قيد التشغيل — تعذّر الحفظ الآن")
+            return
         values = self._to_py(values)
         merged = dict(self._settings)
         if values:
@@ -731,19 +760,28 @@ class AppController(QObject):
             self.modelsChanged.emit()
 
     def _rebuild_hub(self):
-        # Drain the old hub's buffer before tearing it down — WhatsApp reports
-        # that had already arrived but not yet been collect_all()'d must
-        # survive the rebuild, not be silently discarded with the old hub.
+        # Stop the old hub's listeners *before* draining its buffer, not
+        # after: WhatsAppReceiver runs on ThreadingHTTPServer with
+        # daemon_threads=True, so stop()/server_close() does not join
+        # in-flight request handler threads — a request already accepted can
+        # still call on_message() and append to the buffer after stop()
+        # returns. Draining first would miss that append entirely (it lands
+        # in the buffer *after* the snapshot, and the old hub is then
+        # discarded with it still holding that report). Stopping first
+        # closes that window: any report appended while the listener is
+        # shutting down still lands in the old hub's buffer, which is still
+        # reachable, and the drain below still recovers it.
         pending = []
         if self._hub:
-            try:
-                pending = self._hub.take_buffer()
-            except Exception:
-                pending = []
             try:
                 self._hub.stop_all()
             except Exception as e:
                 self.logMessage.emit(f"تعذّر إيقاف الموصّلات السابقة — {e}")
+            try:
+                pending = self._hub.take_buffer()
+            except Exception as e:
+                self.logMessage.emit(f"تعذّر نقل التقارير المعلّقة — {e}")
+                pending = []
         self._hub = ConnectorHub(self._settings, self._contacts)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._hub.set_event_handler(self._wa_event_from_thread)
