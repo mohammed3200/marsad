@@ -32,6 +32,23 @@ class GuessDeptTests(unittest.TestCase):
     def test_unknown_falls_back_to_admin(self):
         self.assertEqual(guess_dept("notes.txt"), "admin")
 
+    def test_arabic_keywords_do_not_match_as_mere_substrings(self):
+        # Regression for the عقد collision: it should not match in unrelated words
+        # معقد (muʿaqqad) = complicated, not a contract
+        self.assertEqual(guess_dept("تقرير_معقد.pdf"), "admin")
+        # العقد here means "decade", not singular contract
+        self.assertEqual(guess_dept("خطة_العقد_القادم.xlsx"), "admin")
+        # عقدة (ʿuqda) = psychological complex, not a contract
+        self.assertEqual(guess_dept("عقدة_نفسية.docx"), "admin")
+
+    def test_latin_keywords_match_when_attached_to_digits(self):
+        # Regression for digit handling: RAN2024 should still match "ran"
+        self.assertEqual(guess_dept("RAN2024_report.docx"), "ran")
+        # core5g should match "core" (and would have matched via "network" too)
+        self.assertEqual(guess_dept("core5g_network.csv"), "core")
+        # 5Gcore should not match (5G prefix, no bare "core" or "network")
+        self.assertEqual(guess_dept("5Gcore_report.csv"), "admin")
+
 
 class IngestTests(unittest.TestCase):
     def setUp(self):

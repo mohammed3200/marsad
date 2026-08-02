@@ -583,7 +583,7 @@ _DEPT_KEYWORDS = (
     ("civil", "civil"), ("انشاء", "civil"), ("إنشاء", "civil"), ("مدني", "civil"),
     ("cost", "cost"), ("finance", "cost"), ("تكاليف", "cost"), ("تكلفة", "cost"),
     ("مالية", "cost"), ("ميزانية", "cost"),
-    ("contract", "contract"), ("عقود", "contract"), ("عقد", "contract"),
+    ("contract", "contract"), ("عقود", "contract"),
     ("procure", "procure"), ("purchase", "procure"), ("مشتريات", "procure"),
     ("supply", "supply"), ("warehouse", "supply"), ("مخازن", "supply"),
     ("توريد", "supply"),
@@ -593,7 +593,8 @@ _DEPT_KEYWORDS = (
 
 # Latin keywords must match whole words: "ran" inside "random"/"transfer"/
 # "grant"/"France" used to route unrelated files to the RAN department.
-_WORD_SPLIT = re.compile(r"[^0-9a-z؀-ۿ]+")
+# Digits are split separately so RAN2024 becomes tokens ["ran", "2024"] and "ran" matches.
+_WORD_SPLIT = re.compile(r"[^a-z؀-ۿ]+")
 
 
 def guess_dept(filename: str) -> str:
