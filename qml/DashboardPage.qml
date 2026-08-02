@@ -246,13 +246,16 @@ Item {
                                             text: modelData.action ? modelData.action : ""
                                             Layout.fillWidth: true
                                             wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignRight
+                                            // no explicit horizontalAlignment: Arabic content's
+                                            // own implicit RTL direction already right-aligns it;
+                                            // an explicit AlignRight here gets double-mirrored by
+                                            // the app-wide LayoutMirroring and lands on the left
+                                            // (see 88ca9e6), stranding it away from the numeral.
                                             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                             color: Theme.colors.ink
                                         }
                                         Text {
                                             Layout.fillWidth: true
-                                            horizontalAlignment: Text.AlignRight
                                             text: {
                                                 var parts = []
                                                 if (modelData.owner) parts.push(modelData.owner)

@@ -36,7 +36,11 @@ PageFrame {
         spacing: 10
         AppButton { text: "تحميل نماذج تجريبية"; kind: "ghost"; onClicked: app.loadSamples() }
         AppButton { text: "رفع ملفات"; kind: "ghost"; onClicked: app.pickReportFiles() }
-        AppButton { text: "جمع من المصادر"; kind: "ghost"; onClicked: app.collectReports() }
+        AppButton {
+            text: app.collecting ? "جارٍ الجمع…" : "جمع من المصادر"; kind: "ghost"
+            enabled: !app.collecting
+            onClicked: app.collectReports()
+        }
         Item { Layout.fillWidth: true }
         AppButton {
             text: "مسح الكل"; kind: "ghost"

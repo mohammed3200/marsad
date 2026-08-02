@@ -46,6 +46,7 @@ class AppController(QObject):
     emailTested       = Signal(bool, str)
     emailSent         = Signal(bool, str)
     emailSendingChanged = Signal()
+    collectingChanged  = Signal()
     exportDone        = Signal(str)          # path
     exportFailed      = Signal(str)
     reportsChanged    = Signal()
@@ -148,6 +149,11 @@ class AppController(QObject):
     def sendingEmail(self):
         """صحيح أثناء إرسال تقرير البريد على خيط منفصل."""
         return self._sending_email
+
+    @Property(bool, notify=collectingChanged)
+    def collecting(self):
+        """صحيح أثناء جمع التقارير (IMAP/ERP/HTTP) على خيط منفصل."""
+        return self._collecting
 
     @Property(int, constant=True)
     def agentCount(self):
@@ -253,7 +259,7 @@ class AppController(QObject):
     def collectReports(self):
         if self._collecting:
             return
-        self._collecting = True
+        self._set_collecting(True)
         threading.Thread(target=self._run_collect, daemon=True).start()
 
     def _run_collect(self):
@@ -263,7 +269,7 @@ class AppController(QObject):
         except Exception as e:
             self.notify.emit(f"تعذّر الجمع: {friendly_error(str(e))}")
         finally:
-            self._collecting = False
+            self._set_collecting(False)
 
     @Slot("QVariant")
     def _on_collected(self, reps):
@@ -1066,6 +1072,15 @@ class AppController(QObject):
             return
         try:
             self.emailSendingChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
+
+    def _set_collecting(self, v):
+        self._collecting = v
+        if self._shutting_down:
+            return
+        try:
+            self.collectingChanged.emit()
         except RuntimeError:
             pass          # C++ half already gone — nothing left to notify
 

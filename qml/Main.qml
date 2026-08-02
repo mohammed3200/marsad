@@ -32,6 +32,7 @@ Item {
     Connections {
         target: app
         function onNavRequested(i) { root.currentIndex = i }
+        function onAnalysisDone() { root.currentIndex = 2 }   // لوحة التحكم
     }
 
     LayoutMirroring.enabled: true
