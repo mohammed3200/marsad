@@ -26,7 +26,8 @@ PageFrame {
 
     EmptyState {
         Layout.fillWidth: true
-        Layout.preferredHeight: 160
+        Layout.preferredHeight: implicitHeight
+        Layout.minimumHeight: implicitHeight
         visible: !pg.hasResults
         message: "لا يوجد تقرير للتصدير"
         hint: "شغّل التحليل من «التحليل والوكلاء» أولاً"
@@ -80,7 +81,7 @@ PageFrame {
             text: pg.hasResults ? (app.dashModel.executive_summary || "") : ""
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            maximumLineCount: 3; elide: Text.ElideLeft
+            maximumLineCount: 3; elide: Text.ElideRight
             horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
@@ -101,7 +102,7 @@ PageFrame {
             visible: pg.notice !== ""
             Layout.fillWidth: true
             wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight
-            maximumLineCount: 2; elide: Text.ElideLeft
+            maximumLineCount: 2; elide: Text.ElideRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: pg.noticeError ? Theme.colors.red : Theme.colors.ink2
         }

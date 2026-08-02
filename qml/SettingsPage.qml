@@ -285,7 +285,7 @@ PageFrame {
         Text {
             text: pg.testMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            maximumLineCount: 2; elide: Text.ElideLeft
+            maximumLineCount: 2; elide: Text.ElideRight
             horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
@@ -323,7 +323,7 @@ PageFrame {
         Text {
             text: pg.emailMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            maximumLineCount: 2; elide: Text.ElideLeft
+            maximumLineCount: 2; elide: Text.ElideRight
             horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
@@ -424,6 +424,9 @@ PageFrame {
                font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.caption; color: Theme.colors.ink3
                LayoutMirroring.enabled: false; horizontalAlignment: Text.AlignLeft }
     }
+
+    // clears the sticky save bar (60px + hairline + air) so the last field never sits flush against it
+    Item { Layout.fillWidth: true; Layout.preferredHeight: 72 }
 
     // ═══════════ sticky save bar (PageFrame footer) ═══════════
     footer: RowLayout {

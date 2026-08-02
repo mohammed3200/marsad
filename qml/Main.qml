@@ -232,127 +232,131 @@ Item {
                 }
             }
 
-            // ── نافذة ربط واتساب برمز QR ──
-            Rectangle {
-                id: waScrim
-                visible: app.waDialogOpen
-                anchors.fill: parent
+        }
+    }
+
+    // ── modal layer — last child of root so it covers the sidebar too ──
+    // ── نافذة ربط واتساب برمز QR ──
+    Rectangle {
+        id: waScrim
+        visible: app.waDialogOpen
+        anchors.fill: parent
+        color: Theme.colors.ink
+        opacity: 0.30
+        z: 100
+        TapHandler { onTapped: app.waDialogOpen = false }
+    }
+    Rectangle {
+        id: waDialog
+        visible: app.waDialogOpen
+        anchors.centerIn: parent
+        z: 101
+        width: 360
+        implicitHeight: waCol.implicitHeight + 40
+        radius: 12
+        color: Theme.colors.bg
+        border.width: 1; border.color: Theme.colors.borderHi
+
+        ColumnLayout {
+            id: waCol
+            anchors { left: parent.left; right: parent.right; top: parent.top
+                      leftMargin: 24; rightMargin: 24; topMargin: 20 }
+            spacing: 12
+
+            Text {
+                text: "ربط واتساب"
+                Layout.alignment: Qt.AlignHCenter
+                font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
                 color: Theme.colors.ink
-                opacity: 0.30
-                TapHandler { onTapped: app.waDialogOpen = false }
             }
-            Rectangle {
-                id: waDialog
-                visible: app.waDialogOpen
-                anchors.centerIn: parent
-                width: 360
-                implicitHeight: waCol.implicitHeight + 40
-                radius: 12
-                color: Theme.colors.bg
-                border.width: 1; border.color: Theme.colors.borderHi
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.colors.border }
 
-                ColumnLayout {
-                    id: waCol
-                    anchors { left: parent.left; right: parent.right; top: parent.top
-                              leftMargin: 24; rightMargin: 24; topMargin: 20 }
-                    spacing: 12
+            // success state
+            RowLayout {
+                visible: app.waLinked
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 9
+                Rectangle {
+                    width: 9; height: 9; radius: 5
+                    color: Theme.colors.green
+                    Layout.alignment: Qt.AlignVCenter
+                }
+                Text {
+                    text: "تم الربط بنجاح"
+                    font.family: Theme.fonts.display; font.pixelSize: Theme.fs.title; font.bold: true
+                    color: Theme.colors.green
+                }
+            }
+            Text {
+                visible: app.waLinked && app.waPhone !== ""
+                text: app.waPhone
+                Layout.alignment: Qt.AlignHCenter
+                font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small
+                color: Theme.colors.ink3
+                LayoutMirroring.enabled: false
+            }
 
-                    Text {
-                        text: "ربط واتساب"
-                        Layout.alignment: Qt.AlignHCenter
-                        font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
-                        color: Theme.colors.ink
-                    }
-                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.colors.border }
+            // waiting state
+            Text {
+                visible: !app.waLinked && app.waQrMatrix.length === 0
+                text: app.waStarting ? "جارٍ تجهيز الجسر وتوليد الرمز…\n(أول مرة قد تستغرق دقائق)"
+                                     : "بانتظار رمز الربط من الجسر…"
+                Layout.alignment: Qt.AlignHCenter
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
+                color: Theme.colors.ink3
+            }
 
-                    // success state
-                    RowLayout {
-                        visible: app.waLinked
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 9
-                        Rectangle {
-                            width: 9; height: 9; radius: 5
-                            color: Theme.colors.green
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-                        Text {
-                            text: "تم الربط بنجاح"
-                            font.family: Theme.fonts.display; font.pixelSize: Theme.fs.title; font.bold: true
-                            color: Theme.colors.green
-                        }
-                    }
-                    Text {
-                        visible: app.waLinked && app.waPhone !== ""
-                        text: app.waPhone
-                        Layout.alignment: Qt.AlignHCenter
-                        font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small
-                        color: Theme.colors.ink3
-                        LayoutMirroring.enabled: false
-                    }
-
-                    // waiting state
-                    Text {
-                        visible: !app.waLinked && app.waQrMatrix.length === 0
-                        text: app.waStarting ? "جارٍ تجهيز الجسر وتوليد الرمز…\n(أول مرة قد تستغرق دقائق)"
-                                             : "بانتظار رمز الربط من الجسر…"
-                        Layout.alignment: Qt.AlignHCenter
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
-                        color: Theme.colors.ink3
-                    }
-
-                    // the QR itself — drawn from the matrix, no image files
-                    Item {
-                        visible: !app.waLinked && app.waQrMatrix.length > 0
-                        Layout.fillWidth: true
-                        implicitHeight: qrBox.height
-                        Rectangle {
-                            id: qrBox
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: waGrid.width + 32; height: waGrid.height + 32
-                            color: "white"
-                            border.width: 1; border.color: Theme.colors.border
-                            radius: 8
-                            Column {
-                                id: waGrid
-                                anchors.centerIn: parent
+            // the QR itself — drawn from the matrix, no image files
+            Item {
+                visible: !app.waLinked && app.waQrMatrix.length > 0
+                Layout.fillWidth: true
+                implicitHeight: qrBox.height
+                Rectangle {
+                    id: qrBox
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: waGrid.width + 32; height: waGrid.height + 32
+                    color: "white"
+                    border.width: 1; border.color: Theme.colors.border
+                    radius: 8
+                    Column {
+                        id: waGrid
+                        anchors.centerIn: parent
+                        spacing: 0
+                        Repeater {
+                            model: app.waQrMatrix
+                            delegate: Row {
                                 spacing: 0
+                                property string rowData: modelData
                                 Repeater {
-                                    model: app.waQrMatrix
-                                    delegate: Row {
-                                        spacing: 0
-                                        property string rowData: modelData
-                                        Repeater {
-                                            model: rowData.length
-                                            delegate: Rectangle {
-                                                width: 6; height: 6
-                                                color: rowData.charAt(index) === "1" ? Theme.colors.ink : "white"
-                                            }
-                                        }
+                                    model: rowData.length
+                                    delegate: Rectangle {
+                                        width: 6; height: 6
+                                        color: rowData.charAt(index) === "1" ? Theme.colors.ink : "white"
                                     }
                                 }
                             }
                         }
                     }
-
-                    Text {
-                        visible: !app.waLinked
-                        text: "واتساب ← الأجهزة المرتبطة ← ربط جهاز ← امسح الرمز"
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
-                        color: Theme.colors.ink3
-                    }
-
-                    AppButton {
-                        text: "إغلاق"; kind: "ghost"
-                        Layout.alignment: Qt.AlignHCenter
-                        onClicked: app.waDialogOpen = false
-                    }
                 }
+            }
+
+            Text {
+                visible: !app.waLinked
+                text: "واتساب ← الأجهزة المرتبطة ← ربط جهاز ← امسح الرمز"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
+                color: Theme.colors.ink3
+            }
+
+            AppButton {
+                text: "إغلاق"; kind: "ghost"
+                Layout.alignment: Qt.AlignHCenter
+                onClicked: app.waDialogOpen = false
             }
         }
     }

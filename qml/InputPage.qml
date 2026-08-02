@@ -110,7 +110,7 @@ PageFrame {
                             Text {
                                 Layout.fillWidth: true
                                 text: model.content
-                                maximumLineCount: 2; elide: Text.ElideLeft; wrapMode: Text.WordWrap
+                                maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap
                                 horizontalAlignment: Text.AlignRight
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                 color: Theme.colors.ink
