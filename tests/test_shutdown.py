@@ -346,6 +346,7 @@ class ShutdownTests(unittest.TestCase):
                     (AppController._set_sending_email, "_sending_email"),
                     (AppController._set_testing_engine, "_testing_engine"),
                     (AppController._set_testing_email, "_testing_email"),
+                    (AppController._set_collecting, "_collecting"),
                 ):
                     c = AppController()
                     c._shutting_down = shutting_down
