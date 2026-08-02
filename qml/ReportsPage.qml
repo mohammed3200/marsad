@@ -177,7 +177,7 @@ PageFrame {
             Text {
                 Layout.fillWidth: true
                 text: pg.recipients.join("، ")
-                elide: Text.ElideLeft
+                elide: Text.ElideRight
                 maximumLineCount: 2; wrapMode: Text.WrapAnywhere
                 font.family: Theme.fonts.mono; font.pixelSize: Theme.fs.small
                 color: Theme.colors.ink2
