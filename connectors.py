@@ -578,11 +578,11 @@ _DEPT_KEYWORDS = (
     # (keyword, dept) — order matters: the first match wins
     ("ran", "ran"), ("radio", "ran"), ("راديو", "ran"),
     ("core", "core"), ("network", "core"), ("النواة", "core"),
-    ("quality", "quality"), ("جودة", "quality"),
+    ("quality", "quality"), ("الجودة", "quality"),
     ("safety", "safety"), ("سلامة", "safety"),
     ("civil", "civil"), ("انشاء", "civil"), ("إنشاء", "civil"), ("مدني", "civil"),
     ("cost", "cost"), ("finance", "cost"), ("تكاليف", "cost"), ("تكلفة", "cost"),
-    ("مالية", "cost"), ("ميزانية", "cost"),
+    ("ميزانية", "cost"),
     ("contract", "contract"), ("عقود", "contract"),
     ("procure", "procure"), ("purchase", "procure"), ("مشتريات", "procure"),
     ("supply", "supply"), ("warehouse", "supply"), ("مخازن", "supply"),
@@ -594,6 +594,9 @@ _DEPT_KEYWORDS = (
 # Latin keywords must match whole words: "ran" inside "random"/"transfer"/
 # "grant"/"France" used to route unrelated files to the RAN department.
 # Digits are split separately so RAN2024 becomes tokens ["ran", "2024"] and "ran" matches.
+# NOTE: Patterns like 5Gcore are a known gap: "core" stays glued to the digit prefix,
+# making gcore a single token that doesn't match "core". Fixing this would require
+# domain-specific \dG generation-marker rules and is deferred (false negative accepted).
 _WORD_SPLIT = re.compile(r"[^a-z؀-ۿ]+")
 
 

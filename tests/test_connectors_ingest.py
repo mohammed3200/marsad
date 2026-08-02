@@ -46,8 +46,29 @@ class GuessDeptTests(unittest.TestCase):
         self.assertEqual(guess_dept("RAN2024_report.docx"), "ran")
         # core5g should match "core" (and would have matched via "network" too)
         self.assertEqual(guess_dept("core5g_network.csv"), "core")
-        # 5Gcore should not match (5G prefix, no bare "core" or "network")
+        # 5Gcore should not match (5G prefix, digit-glued to "core", creates "gcore" token)
+        # This is a known gap: false negative (manual triage) not false positive
         self.assertEqual(guess_dept("5Gcore_report.csv"), "admin")
+
+    def test_quality_keyword_does_not_match_existing_data(self):
+        # Regression for جودة collision with موجودة (existing)
+        # بيانات_موجودة = "existing data"
+        self.assertEqual(guess_dept("بيانات_موجودة.xlsx"), "admin")
+        # Positive case: genuine quality reports still route via الجودة (with definite article)
+        self.assertEqual(guess_dept("تقرير_الجودة.pdf"), "quality")
+
+    def test_cost_keyword_does_not_match_northern_or_probability(self):
+        # Regression for مالية collision with شمالية (northern), احتمالية (probability),
+        # and عمالية (labor) — all common words that would misroute files
+        # المنطقة_الشمالية = "Northern region" (very common in telecom regional rollout context)
+        self.assertEqual(guess_dept("المنطقة_الشمالية.pdf"), "admin")
+        # تحليل_احتمالية_المخاطر = "risk probability analysis"
+        self.assertEqual(guess_dept("تحليل_احتمالية_المخاطر.xlsx"), "admin")
+        # نزاع_عمالية = "labor dispute"
+        self.assertEqual(guess_dept("نزاع_عمالية.pdf"), "admin")
+        # Positive case: genuine cost reports still route via more specific keywords
+        self.assertEqual(guess_dept("تقرير_التكاليف.xlsx"), "cost")
+        self.assertEqual(guess_dept("الميزانية_السنوية.pdf"), "cost")
 
 
 class IngestTests(unittest.TestCase):
