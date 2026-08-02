@@ -23,6 +23,7 @@ import time
 import logging
 import secrets
 import ssl
+import re
 from email.header     import decode_header
 from email.mime.text  import MIMEText
 from email.mime.multipart   import MIMEMultipart
@@ -573,24 +574,37 @@ def is_internal_file(fpath) -> bool:
     return False
 
 
+_DEPT_KEYWORDS = (
+    # (keyword, dept) — order matters: the first match wins
+    ("ran", "ran"), ("radio", "ran"), ("راديو", "ran"),
+    ("core", "core"), ("network", "core"), ("النواة", "core"),
+    ("quality", "quality"), ("جودة", "quality"),
+    ("safety", "safety"), ("سلامة", "safety"),
+    ("civil", "civil"), ("انشاء", "civil"), ("إنشاء", "civil"), ("مدني", "civil"),
+    ("cost", "cost"), ("finance", "cost"), ("تكاليف", "cost"), ("تكلفة", "cost"),
+    ("مالية", "cost"), ("ميزانية", "cost"),
+    ("contract", "contract"), ("عقود", "contract"), ("عقد", "contract"),
+    ("procure", "procure"), ("purchase", "procure"), ("مشتريات", "procure"),
+    ("supply", "supply"), ("warehouse", "supply"), ("مخازن", "supply"),
+    ("توريد", "supply"),
+    ("schedule", "schedule"), ("جدول", "schedule"), ("زمني", "schedule"),
+    ("ops", "ops"), ("operations", "ops"), ("عمليات", "ops"),
+)
+
+# Latin keywords must match whole words: "ran" inside "random"/"transfer"/
+# "grant"/"France" used to route unrelated files to the RAN department.
+_WORD_SPLIT = re.compile(r"[^0-9a-z؀-ۿ]+")
+
+
 def guess_dept(filename: str) -> str:
     """محاولة تخمين القسم من اسم الملف"""
-    fl = filename.lower()
-    mapping = {
-        "ran"      : "ran",   "radio"   : "ran",
-        "core"     : "core",  "network" : "core",
-        "quality"  : "quality","جودة"   : "quality",
-        "safety"   : "safety", "سلامة"  : "safety",
-        "civil"    : "civil",  "انشاء"  : "civil",
-        "cost"     : "cost",   "تكالف"  : "cost",
-        "finance"  : "cost",   "مالية"  : "cost",
-        "contract" : "contract","عقود"  : "contract",
-        "procure"  : "procure","مشتريات": "procure",
-        "supply"   : "supply", "مخازن"  : "supply",
-        "schedule" : "schedule","جدول"  : "schedule",
-    }
-    for key, dept in mapping.items():
-        if key in fl:
+    stem = str(filename).lower()
+    tokens = set(_WORD_SPLIT.split(stem)) - {""}
+    for keyword, dept in _DEPT_KEYWORDS:
+        if keyword.isascii():
+            if keyword in tokens:
+                return dept
+        elif keyword in stem:          # Arabic: affixes make whole-word matching wrong
             return dept
     return "admin"
 
