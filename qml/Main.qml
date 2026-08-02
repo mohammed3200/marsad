@@ -48,9 +48,10 @@ Item {
             Layout.fillHeight: true
             Layout.preferredWidth: 256
             color: Theme.colors.panel
-            // hairline on the inner (content-facing) edge
+            // hairline on the inner (content-facing) edge — anchors are mirrored by
+            // LayoutMirroring, so `right` here is the visual left of the sidebar
             Rectangle {
-                anchors { top: parent.top; bottom: parent.bottom; left: parent.left }
+                anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
                 width: 1; color: Theme.colors.border
             }
 
@@ -105,16 +106,16 @@ Item {
                                 radius: 10
                                 color: active ? Theme.colors.accentSoft : (hover.hovered ? Theme.colors.fill : "transparent")
                             }
-                            // leading-edge marker (right in RTL)
+                            // leading-edge marker (visually right in RTL — anchors are mirrored)
                             Rectangle {
-                                anchors { verticalCenter: parent.verticalCenter; right: parent.right; rightMargin: 6 }
+                                anchors { verticalCenter: parent.verticalCenter; left: parent.left; leftMargin: 6 }
                                 width: 3; height: active ? 22 : 0; radius: 2
                                 color: Theme.colors.accent
                                 Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutQuart } }
                             }
                             RowLayout {
                                 anchors {
-                                    right: parent.right; rightMargin: 20; left: parent.left; leftMargin: 14
+                                    right: parent.right; rightMargin: 14; left: parent.left; leftMargin: 20
                                     verticalCenter: parent.verticalCenter
                                 }
                                 spacing: 10
