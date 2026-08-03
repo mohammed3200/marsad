@@ -113,20 +113,48 @@ class EmailConnector:
         self._callback  = None   # يُستدعى عند وصول رسائل جديدة
 
     def test_connection(self) -> tuple:
-        """اختبار الاتصال — يُعيد (True/False, رسالة)"""
+        """اختبار الاتصال — يُعيد (True/False, رسالة)
+
+        Two legs, because the two halves of this feature use different
+        servers and different credentials paths: IMAP is what `fetch_new`
+        collects with, SMTP is what `send_report` sends with. Testing only
+        IMAP — as this did — proved nothing about the send path that the
+        release checklist's "email the report" item actually exercises, so a
+        green test could sit next to a send that always failed.
+
+        The SMTP leg logs in and stops. No message is sent.
+        """
         if not self.user or not self.password:
             return False, "لم تُدخَل بيانات البريد في الإعدادات"
+
+        imap_err = None
         try:
             mail = imaplib.IMAP4_SSL(self.imap_host, timeout=10, ssl_context=SSL_CONTEXT)
             mail.login(self.user, self.password)
             mail.logout()
-            return True, f"✓ الاتصال بـ {self.user} ناجح"
         except imaplib.IMAP4.error as e:
             log.warning(f"IMAP login failed for {self.user}: {e}")
-            return False, friendly_error(str(e))
+            imap_err = friendly_error(str(e))
         except Exception as e:
             log.warning(f"IMAP connection failed ({self.imap_host}): {e}")
-            return False, friendly_error(str(e))
+            imap_err = friendly_error(str(e))
+
+        smtp_err = None
+        try:
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as srv:
+                srv.starttls(context=SSL_CONTEXT)
+                srv.login(self.user, self.password)
+        except Exception as e:
+            log.warning(f"SMTP login failed ({self.smtp_host}:{self.smtp_port}): {e}")
+            smtp_err = friendly_error(str(e))
+
+        if imap_err and smtp_err:
+            return False, f"تعذّر الاستقبال والإرسال — الاستقبال: {imap_err} · الإرسال: {smtp_err}"
+        if imap_err:
+            return False, f"الإرسال يعمل، لكن تعذّر الاستقبال: {imap_err}"
+        if smtp_err:
+            return False, f"الاستقبال يعمل، لكن تعذّر الإرسال: {smtp_err}"
+        return True, f"✓ الاتصال بـ {self.user} ناجح — الاستقبال والإرسال"
 
     def fetch_new(self) -> list:
         """سحب الرسائل الجديدة غير المقروءة"""
@@ -173,10 +201,16 @@ class EmailConnector:
         return reports
 
     def send_report(self, recipients: list, subject: str,
-                    html_body: str, attachments: list = None) -> bool:
-        """إرسال التقرير النهائي بالبريد مع مرفقات"""
+                    html_body: str, attachments: list = None) -> tuple:
+        """إرسال التقرير النهائي بالبريد مع مرفقات — يُعيد (True/False, رسالة)
+
+        Returns a cause rather than a bare bool. Swallowing the exception into
+        the log meant the UI could only ever say «تعذّر إرسال البريد — راجع
+        الإعدادات» while the real reason — rejected credentials, TLS failure,
+        relay denied — sat in a log file the user never opens.
+        """
         if not recipients or not self.user:
-            return False
+            return False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات"
         try:
             msg = MIMEMultipart("mixed")
             msg["From"]    = self.user
@@ -195,10 +229,10 @@ class EmailConnector:
                 srv.login(self.user, self.password)
                 srv.sendmail(self.user, recipients, msg.as_bytes())
             log.info(f"أُرسل التقرير إلى: {recipients}")
-            return True
+            return True, "أُرسل التقرير بالبريد"
         except Exception as e:
             log.error(f"فشل الإرسال: {e}")
-            return False
+            return False, friendly_error(str(e))
 
     def start_auto_fetch(self, interval_minutes: int, callback):
         """بدء السحب التلقائي كل X دقيقة"""
@@ -994,7 +1028,7 @@ class ConnectorHub:
     def test_email(self) -> tuple:
         return self.email.test_connection()
 
-    def send_report(self, recipients, subject, html, attachments=None) -> bool:
+    def send_report(self, recipients, subject, html, attachments=None) -> tuple:
         return self.email.send_report(recipients, subject, html, attachments)
 
 

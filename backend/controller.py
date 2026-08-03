@@ -646,11 +646,14 @@ class AppController(QObject):
                     self._emailSent.emit(False, "لا يوجد مستلمون مضبوطون — اضبطهم في الإعدادات")
                 return
             html = build_report_html(results)
-            ok = hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
+            ok, detail = hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
             if not self._shutting_down:
+                # Keep the old generic line as the fallback: send_report only
+                # returns a cause when it has one worth showing.
                 self._emailSent.emit(
                     bool(ok),
-                    "أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد — راجع الإعدادات")
+                    detail or ("أُرسل التقرير بالبريد" if ok
+                               else "تعذّر إرسال البريد — راجع الإعدادات"))
         except Exception as e:
             # Never let a second emit — against a controller that may already be
             # torn down if this fires after quit — raise out of a daemon thread.

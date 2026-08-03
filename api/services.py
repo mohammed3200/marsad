@@ -469,8 +469,9 @@ class AppService:
             return False, "لا يوجد مستلمون مضبوطون في الإعدادات"
         try:
             html = build_report_html(self._results)
-            ok = self._hub.send_report(recipients, "تقرير حالة المشروع — مرصد", html)
-            msg = "أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد"
+            ok, detail = self._hub.send_report(
+                recipients, "تقرير حالة المشروع — مرصد", html)
+            msg = detail or ("أُرسل التقرير بالبريد" if ok else "تعذّر إرسال البريد")
             self._emit("notify", message=msg)
             return ok, msg
         except Exception as e:
