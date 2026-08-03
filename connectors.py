@@ -646,6 +646,34 @@ def guess_dept(filename: str) -> str:
     return "admin"
 
 
+# Document readers embed a placeholder straight into report *content* on
+# parse failure — that text flows into the LLM prompt, the InputPage report
+# list (qml/InputPage.qml reads model.content directly, unfiltered) and any
+# chief-agent summary that echoes source text back, and ends up in exported
+# PDFs/emails. It is not a notify/log call site so it sits outside the
+# friendly_error()/friendly_fs_error() contract those functions were built
+# for (provider/network vs. disk/socket errors) — but raw Python exception
+# text has no business there either, so classify it with a reader-specific
+# fallback that keeps whatever diagnostic signal is actually actionable
+# ("the file is corrupt") instead of echoing library internals.
+_CORRUPT_MARKERS = (
+    "badzipfile", "not a zip file", "package not found",
+    "invalidfileexception", "pdfreaderror", "eof marker not found",
+    "unsupported format", "bad magic number", "corrupt", "damaged",
+    "unexpected end of",
+)
+
+
+def _reader_error(exc: Exception) -> str:
+    """Classify a document-reader parse failure into short Arabic."""
+    if isinstance(exc, OSError):
+        return friendly_fs_error(exc)
+    text = f"{type(exc).__name__} {exc}".lower()
+    if any(m in text for m in _CORRUPT_MARKERS):
+        return "الملف تالف أو بصيغة غير مدعومة"
+    return "تعذّر فهم محتوى الملف"
+
+
 def _read_excel(fpath: Path) -> str:
     try:
         import openpyxl
@@ -663,7 +691,8 @@ def _read_excel(fpath: Path) -> str:
     except ImportError:
         return "[يحتاج مكتبة openpyxl — pip install openpyxl]"
     except Exception as e:
-        return f"[خطأ في قراءة Excel: {e}]"
+        log.warning(f"فشل قراءة Excel ({fpath.name}): {e}")
+        return f"[خطأ في قراءة Excel: {_reader_error(e)}]"
 
 
 def _read_csv(fpath: Path) -> str:
@@ -691,7 +720,8 @@ def _read_pdf(fpath: Path) -> str:
     except ImportError:
         return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
     except Exception as e:
-        return f"[خطأ في PDF: {e}]"
+        log.warning(f"فشل قراءة PDF ({fpath.name}): {e}")
+        return f"[خطأ في PDF: {_reader_error(e)}]"
 
 
 def _read_docx(fpath: Path) -> str:
@@ -702,7 +732,8 @@ def _read_docx(fpath: Path) -> str:
     except ImportError:
         return "[يحتاج مكتبة python-docx — pip install python-docx]"
     except Exception as e:
-        return f"[خطأ في Word: {e}]"
+        log.warning(f"فشل قراءة Word ({fpath.name}): {e}")
+        return f"[خطأ في Word: {_reader_error(e)}]"
 
 
 def read_file_to_report(fpath, source: str = "upload",
@@ -946,7 +977,7 @@ class ConnectorHub:
                 conn.stop()
             except Exception as e:
                 log.warning(f"فشل إيقاف {name}: {e}")
-                self._log_fn(f"فشل إيقاف {name}: {e}")
+                self._log_fn(f"فشل إيقاف {name}: {friendly_fs_error(e)}")
 
     def test_email(self) -> tuple:
         return self.email.test_connection()
