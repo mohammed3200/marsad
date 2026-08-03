@@ -70,7 +70,7 @@ class AIEngine:
         except TimeoutError:
             return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e), "status": None}
+            return {"error": friendly_error(str(e)), "status": None}
 
     @staticmethod
     def _http_get_json(url: str, headers: dict, timeout: int) -> dict:
@@ -96,7 +96,7 @@ class AIEngine:
         except TimeoutError:
             return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e), "status": None}
+            return {"error": friendly_error(str(e)), "status": None}
 
     def list_models(self) -> tuple:
         """قائمة النماذج المتاحة من المزوّد المُختار — (ok, models | رسالة)."""
@@ -239,17 +239,17 @@ class AIEngine:
         except urllib.error.URLError as e:
             if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
                 return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
-            return {"error": f"تعذر الاتصال بـ Ollama: {e.reason}\nتأكد من تشغيل Ollama أولاً"}
+            return {"error": f"تعذر الاتصال بـ Ollama: {friendly_error(str(e.reason))}\nتأكد من تشغيل Ollama أولاً"}
         except TimeoutError:
             return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": friendly_error(str(e))}
 
     def _ask_claude(self, system_prompt: str, user_text: str) -> dict:
         api_key = self.settings.get("claude_api_key", "")
         if not api_key:
             return {"error": "لم يُضبَط مفتاح Claude API في الإعدادات"}
-        import urllib.request
+        import urllib.request, urllib.error
         payload = json.dumps({
             "model"     : self.settings.get("claude_model", "claude-opus-4-5"),
             "max_tokens": 4096,
@@ -270,8 +270,24 @@ class AIEngine:
             with urllib.request.urlopen(req, timeout=self._timeout()) as resp:
                 data = json.loads(resp.read())
                 return self._parse_json(data["content"][0]["text"])
+        # Mirrors _http_json/_http_get_json: HTTPError first (401/429/5xx carry the
+        # response *body*, never the outgoing request — the x-api-key header above is
+        # never read back or echoed), then URLError/TimeoutError, then a generic
+        # catch-all — all through friendly_error so nothing raw reaches the UI.
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                body = ""
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+            return {"error": friendly_error(str(e.reason)), "status": None}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": friendly_error(str(e))}
 
     def _openai_chat(self, base_url: str, api_key: str, model: str,
                      headers: dict, system_prompt: str, user_text: str) -> dict:
@@ -297,7 +313,7 @@ class AIEngine:
         try:
             return self._parse_json(res["_ok"]["choices"][0]["message"]["content"])
         except Exception as e:
-            return {"error": f"رد غير متوقع: {e}"}
+            return {"error": f"رد غير متوقع: {friendly_error(str(e))}"}
 
     def _ask_openai(self, system_prompt: str, user_text: str) -> dict:
         api_key = self.settings.get("openai_api_key", "")
@@ -338,7 +354,7 @@ class AIEngine:
         try:
             return self._parse_json(res["_ok"]["candidates"][0]["content"]["parts"][0]["text"])
         except Exception as e:
-            return {"error": f"رد غير متوقع: {e}"}
+            return {"error": f"رد غير متوقع: {friendly_error(str(e))}"}
 
     def test_connection(self) -> tuple:
         """اختبار الاتصال بالمحرّك المُختار (يعمل لكل المزوّدين عبر ask())."""

@@ -399,7 +399,8 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
         except FileNotFoundError:
             return False, "Node.js غير مثبت — حمّله من nodejs.org"
         except Exception as e:
-            return False, str(e)
+            log.warning("node.js version check failed: %s", e, exc_info=True)
+            return False, friendly_fs_error(e)
 
     @staticmethod
     def install_packages() -> bool:

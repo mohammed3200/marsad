@@ -109,5 +109,49 @@ class OpenAiCompatRetryTests(unittest.TestCase):
         self.assertNotIn("response_format", self.payloads[1])
 
 
+class ClaudeHttpErrorClassificationTests(unittest.TestCase):
+    """Round-2 launch-readiness finding: _ask_claude had no urllib.error.HTTPError
+    branch at all (unlike _ask_ollama/_http_json/_http_get_json), so a real 401
+    invalid-key / 429 rate-limit / 5xx response from Anthropic returned
+    {"error": str(e)} verbatim — raw English JSON reaching the Arabic-only UI
+    through test_connection() -> testConnection()/_run_connection_test() -> notify,
+    and through run_all()'s per-agent log line. Proves the fix classifies it, and
+    that the classified message never echoes the outgoing x-api-key header."""
+
+    def setUp(self):
+        self._real = urllib.request.urlopen
+
+    def tearDown(self):
+        urllib.request.urlopen = self._real
+
+    def _raise_401(self, req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.full_url, 401, "Unauthorized", {},
+            io.BytesIO(b'{"type":"error","error":{"type":"authentication_error",'
+                      b'"message":"invalid x-api-key"}}'))
+
+    def test_claude_401_produces_arabic_not_raw_english(self):
+        urllib.request.urlopen = self._raise_401
+        settings = {**SETTINGS, "ai_backend": "claude"}
+        out = AIEngine(settings).ask("sys", "user")
+        self.assertIn("error", out)
+        self.assertEqual(out["error"],
+                         "مفتاح API غير صالح أو بلا صلاحية — تحقق من المفتاح")
+        # the raw response body must not survive into the user-facing message
+        self.assertNotIn("invalid x-api-key", out["error"])
+        self.assertNotIn("authentication_error", out["error"])
+        # and the classified message must never echo the request's own
+        # x-api-key header value (the secret used to authenticate)
+        self.assertNotIn(settings["claude_api_key"], out["error"])
+
+    def test_claude_test_connection_surfaces_the_same_arabic_message(self):
+        """test_connection() is exactly what testConnection()/_run_connection_test()
+        in both backend/controller.py and api/services.py show via notify."""
+        urllib.request.urlopen = self._raise_401
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "claude"}).test_connection()
+        self.assertFalse(ok)
+        self.assertEqual(msg, "مفتاح API غير صالح أو بلا صلاحية — تحقق من المفتاح")
+
+
 if __name__ == "__main__":
     unittest.main()
