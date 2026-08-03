@@ -45,6 +45,19 @@ def _obj(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _cell(value):
+    """A value safe to assign to an openpyxl cell.
+
+    openpyxl accepts str/int/float/bool/None/datetime but raises on a raw
+    list or dict — reachable here because tier() and _obj()/_rows() only
+    guard the *classification* of a model-returned field (health/level/
+    status), not the raw value written into the sheet next to it (e.g. a
+    risk `level` of `["عالية"]`). Anything else is stringified, matching
+    the str(v) already used a few rows down for the schedule/finance sheets.
+    """
+    return value if isinstance(value, (str, int, float, bool, type(None))) else str(value)
+
+
 def export_pdf(results: dict, output_path: str) -> str:
     """Branded Arabic PDF — Light Executive Report identity (white paper,
     hairlines, one teal accent, status as colored words/dots).
@@ -379,7 +392,7 @@ def export_excel(results: dict, output_path: str) -> str:
         t=tier(s)
         bg=_XL_TIER_FILL[t]
         for ci,v in enumerate([kpi.get("name",""),kpi.get("value",""),kpi.get("trend",""),s],1):
-            c=ws1.cell(i,ci); c.value=v
+            c=ws1.cell(i,ci); c.value=_cell(v)
             body(c,bold=(ci==4),
                  color=_XL_TIER[t] if ci==4 else "1E293B",
                  bg=bg if ci==4 else (GRAY if i%2==0 else WHITE),center=(ci>1))
@@ -399,7 +412,7 @@ def export_excel(results: dict, output_path: str) -> str:
         p=max(0,min(pr-1,2)); bg=pbgs[p]
         for ci,v in enumerate([str(pr),act.get("action",""),act.get("owner",""),
                                 act.get("deadline",""),act.get("impact","")],1):
-            c=ws1.cell(i,ci); c.value=v
+            c=ws1.cell(i,ci); c.value=_cell(v)
             body(c,bold=(ci==1),
                  color="FCA5A5" if ci==1 and p==0 else "FCD34D" if ci==1 and p==1 else "93C5FD" if ci==1 else "1E293B",
                  bg=bg if ci==1 else (GRAY if i%2==0 else WHITE),center=(ci==1))
@@ -418,7 +431,7 @@ def export_excel(results: dict, output_path: str) -> str:
         l=rk.get("level",""); t=tier(l); bg,fg=_XL_TIER[t],_XL_TIER_FG[t]
         for ci,v in enumerate([rk.get("title",""),l,rk.get("category",""),
                                 rk.get("description",""),rk.get("solution",""),rk.get("owner","")],1):
-            c=ws2.cell(ri,ci); c.value=v
+            c=ws2.cell(ri,ci); c.value=_cell(v)
             body(c,bold=(ci==2),color=fg if ci==2 else "1E293B",
                  bg=bg if ci==2 else (GRAY if ri%2==0 else WHITE),center=(ci==2))
         ws2.row_dimensions[ri].height=28
@@ -444,7 +457,7 @@ def export_excel(results: dict, output_path: str) -> str:
         ph=_obj(ph)
         s=ph.get("status",""); t=tier(s); sbg=_XL_TIER_FILL[t]
         for ci,v in enumerate([ph.get("name",""),s,_pct(ph.get("completion_pct",0))],1):
-            c=ws3.cell(ri,ci); c.value=v
+            c=ws3.cell(ri,ci); c.value=_cell(v)
             body(c,bold=(ci==2),
                  color=_XL_TIER[t] if ci==2 else "1E293B",
                  bg=sbg if ci==2 else (GRAY if ri%2==0 else WHITE),center=(ci>1))

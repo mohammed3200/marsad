@@ -22,11 +22,17 @@ PageFrame {
              : s === "erp"      ? "ERP" : s
     }
     function deptLabel(d) {
+        // يجب أن تغطي كل قيم DEPT_KEY_MAP (core/contacts.py) بالإضافة إلى
+        // "schedule" التي يُصدرها guess_dept() في connectors.py — وإلا ظهرت
+        // الكلمة اللاتينية الخام داخل قائمة عربية بالكامل من اليمين لليسار.
         const m = { "ran": "شبكة الراديو RAN", "core": "شبكة النواة Core",
                     "ops": "العمليات", "quality": "الجودة", "safety": "السلامة",
                     "civil": "الأعمال الإنشائية", "cost": "التكاليف",
                     "contract": "العقود", "procure": "المشتريات",
-                    "supply": "المخازن والتوريد", "admin": "إداري" }
+                    "supply": "المخازن والتوريد", "schedule": "الجدول الزمني",
+                    "hr": "الموارد البشرية", "pmo": "مكتب إدارة المشاريع PMO",
+                    "risk": "إدارة المخاطر", "it": "تقنية المعلومات",
+                    "admin": "إداري" }
         return m[d] || d
     }
 

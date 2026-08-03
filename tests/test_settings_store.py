@@ -72,6 +72,19 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(on_disk["ai_backend"], "claude")
 
     def test_isolation_covers_the_controller_path_globals(self):
+        """Regression: this test used to swap in a fake module and `del`
+        it in `finally` — which discards whatever real `backend.controller`
+        was registered in sys.modules before this test ran, rather than
+        restoring it. isolated_state() looks the module up via
+        `sys.modules.get("backend.controller")`, so any test executed
+        after this one (unittest discover runs files in sorted order —
+        test_settings_store sorts before test_shutdown) would silently
+        stop being redirected into a temp dir and run its 14
+        AppController() constructions against the developer's real
+        settings.json/reports/data. Save-and-restore the real module
+        object instead, exactly like isolated_state() itself does for
+        every other patched global."""
+        real_controller = sys.modules.get("backend.controller")
         fake = types.ModuleType("backend.controller")
         fake.REPORTS = "REAL_REPORTS"
         fake.SAMPLES_F = "REAL_SAMPLES"
@@ -87,7 +100,14 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(fake.LATEST_F, "REAL_LATEST")
             self.assertEqual(fake.DATA_DIR, "REAL_DATA_DIR")
         finally:
-            del sys.modules["backend.controller"]
+            if real_controller is not None:
+                sys.modules["backend.controller"] = real_controller
+            else:
+                sys.modules.pop("backend.controller", None)
+            # The real module (if any) must come back exactly as it was —
+            # not left holding this test's temp-dir globals.
+            if real_controller is not None:
+                self.assertIs(sys.modules["backend.controller"], real_controller)
 
 
 if __name__ == "__main__":

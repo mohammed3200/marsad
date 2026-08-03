@@ -34,6 +34,14 @@ try:
     from core.paths import DATA_DIR, BUNDLE_DIR
     from core.errors import friendly_error, friendly_fs_error
     from core.status import tier
+    # Same coercion core/exporters.py uses before touching a results field —
+    # build_report_html is the third consumer of the frozen `results`
+    # contract (PDF, Excel, email HTML) and needs the same tolerance for
+    # shapes a model actually returns (top_actions as a bare string or a
+    # list of strings, kpis as a dict, …). core.exporters imports only
+    # core.status/core.paths (never connectors), so importing it here does
+    # not create a cycle.
+    from core.exporters import _obj, _rows
     LOG_DIR = DATA_DIR / "logs"
 except Exception:  # pragma: no cover — core not importable in isolation
     DATA_DIR = BUNDLE_DIR = Path(__file__).parent
@@ -44,6 +52,10 @@ except Exception:  # pragma: no cover — core not importable in isolation
         return str(exc)
     def tier(_literal):
         return "neutral"
+    def _obj(value):
+        return value if isinstance(value, dict) else {}
+    def _rows(value):
+        return value if isinstance(value, list) else []
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -1003,13 +1015,14 @@ _HTML_TIER = {"good": "#10b981", "warn": "#f59e0b",
 
 
 def build_report_html(results: dict) -> str:
-    chief  = results.get("chief", {})
+    chief  = _obj((results or {}).get("chief"))
     health = chief.get("overall_health", "غير محدد")
     color  = _HTML_TIER[tier(health)]
     date   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     actions_rows = ""
-    for act in chief.get("top_actions", [])[:5]:
+    for act in _rows(chief.get("top_actions"))[:5]:
+        act = _obj(act)
         actions_rows += f"""
         <tr>
           <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;
@@ -1020,7 +1033,8 @@ def build_report_html(results: dict) -> str:
         </tr>"""
 
     kpi_cards = ""
-    for kpi in chief.get("kpis", [])[:6]:
+    for kpi in _rows(chief.get("kpis"))[:6]:
+        kpi = _obj(kpi)
         sc = _HTML_TIER[tier(kpi.get("status"))]
         kpi_cards += f"""
         <div style="background:#f8fafc;border:1px solid {sc};border-radius:8px;

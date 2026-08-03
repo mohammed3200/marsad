@@ -731,8 +731,20 @@ class AppController(QObject):
         snap = {k: self._settings.get(k) for k in ENGINE_KEYS}
         snap["name"] = name
         profiles.append(snap)
-        self._settings["engine_profiles"] = profiles
-        save_settings(self._settings)
+        # Build the write on a copy, not self._settings in place: a failed
+        # write must leave self._settings exactly as it was, or the
+        # profiles list shown by engineProfilesModel silently disagrees
+        # with what's actually on disk until the next restart — the same
+        # merge-then-write-then-assign shape saveSettings() already uses.
+        merged = dict(self._settings)
+        merged["engine_profiles"] = profiles
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("engine profile save failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر حفظ الملف: {friendly_fs_error(e)}")
+            return
+        self._settings = merged
         self.engineProfilesChanged.emit()
         self.notify.emit(f"حُفظ الملف «{name}»")
 
@@ -765,8 +777,15 @@ class AppController(QObject):
             return
         profiles = [p for p in self._settings.get("engine_profiles", [])
                     if p.get("name") != name]
-        self._settings["engine_profiles"] = profiles
-        save_settings(self._settings)
+        merged = dict(self._settings)
+        merged["engine_profiles"] = profiles
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("engine profile delete failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر حذف الملف: {friendly_fs_error(e)}")
+            return
+        self._settings = merged
         self.engineProfilesChanged.emit()
         self.notify.emit(f"حُذف الملف «{name}»")
 
@@ -775,8 +794,7 @@ class AppController(QObject):
         """اجلب قائمة النماذج من المزوّد الحالي على خيط منفصل."""
         if self._models_busy:
             return
-        self._models_busy = True
-        self.modelsChanged.emit()
+        self._set_models_busy(True)
         threading.Thread(target=self._run_fetch_models, daemon=True).start()
 
     def _run_fetch_models(self):
@@ -792,8 +810,12 @@ class AppController(QObject):
             else:
                 self.notify.emit(out if isinstance(out, str) else "تعذّر جلب النماذج")
         finally:
-            self._models_busy = False
-            self.modelsChanged.emit()
+            # Guarded setter, not a raw emit: this runs in a finally block
+            # on a daemon thread that can easily outlive QCoreApplication
+            # teardown (the fetch itself can block for ai_timeout) — the
+            # same class of bug tests/test_shutdown.py's guard-flag test
+            # exists for (see _set_sending_email et al.).
+            self._set_models_busy(False)
 
     def _rebuild_hub(self):
         # Stop the old hub's listeners *before* draining its buffer, not
@@ -862,22 +884,50 @@ class AppController(QObject):
 
     @Slot("QVariant")
     def addEmployee(self, emp):
-        self._contacts.add_employee(dict(self._to_py(emp) or {}))
+        try:
+            self._contacts.add_employee(dict(self._to_py(emp) or {}))
+        except Exception as e:
+            log.warning("add employee failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر إضافة الموظف: {friendly_fs_error(e)}")
 
     @Slot(int, "QVariant")
     def updateEmployee(self, emp_id, fields):
-        self._contacts.update_employee(emp_id, dict(self._to_py(fields) or {}))
+        try:
+            self._contacts.update_employee(emp_id, dict(self._to_py(fields) or {}))
+        except Exception as e:
+            log.warning("update employee failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر تحديث الموظف: {friendly_fs_error(e)}")
 
     @Slot(int)
     def deleteEmployee(self, emp_id):
-        self._contacts.delete_employee(emp_id)
+        try:
+            self._contacts.delete_employee(emp_id)
+        except Exception as e:
+            log.warning("delete employee failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر حذف الموظف: {friendly_fs_error(e)}")
 
     @Slot()
     def syncContacts(self):
+        # Same gate as saveSettings()/saveEngineProfile(): this writes
+        # settings.json directly and calls _rebuild_hub(), which tears down
+        # and recreates every connector — doing that mid-analysis would
+        # kill the in-flight run's IMAP/ERP/WhatsApp listeners out from
+        # under it, unlike the other three writers which only race the
+        # write itself.
+        if self._busy:
+            self.notify.emit("التحليل قيد التشغيل — تعذّر الحفظ الآن")
+            return
         maps = self._contacts.export_to_config()
-        self._settings["email_dept_map"] = maps["email_dept_map"]
-        self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
-        save_settings(self._settings)
+        merged = dict(self._settings)
+        merged["email_dept_map"] = maps["email_dept_map"]
+        merged["whatsapp_groups"] = maps["whatsapp_groups"]
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("contacts sync save failed: %s", e, exc_info=True)
+            self.notify.emit(f"تعذّر مزامنة جهات الاتصال: {friendly_fs_error(e)}")
+            return
+        self._settings = merged
         self.settingsChanged.emit()
         # أعد بناء المحور حتى تسري خرائط التوجيه الجديدة على الموصّلات فوراً
         self._rebuild_hub()
@@ -942,8 +992,7 @@ class AppController(QObject):
             except Exception as e:
                 log.warning("whatsapp receiver bind failed: %s", e, exc_info=True)
                 self.logMessage.emit(f"واتساب: تعذّر بدء المستقبِل — {friendly_fs_error(e)}")
-        self._wa_starting = True
-        self.waChanged.emit()
+        self._set_wa_starting(True)
         threading.Thread(target=self._run_bridge_start, daemon=True).start()
 
     def _run_bridge_start(self):
@@ -985,8 +1034,10 @@ class AppController(QObject):
             log.warning("whatsapp bridge start failed: %s", e, exc_info=True)
             self.notify.emit(f"تعذّر تشغيل الجسر: {friendly_fs_error(e)}")
         finally:
-            self._wa_starting = False
-            self.waChanged.emit()
+            # Guarded setter, not a raw emit: this finally block runs on a
+            # daemon thread (npm install / node startup) that can easily
+            # outlive QCoreApplication teardown — see _set_models_busy above.
+            self._set_wa_starting(False)
 
     @Slot()
     def stopWhatsAppBridge(self):
@@ -1099,6 +1150,24 @@ class AppController(QObject):
             return
         try:
             self.collectingChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
+
+    def _set_models_busy(self, v):
+        self._models_busy = v
+        if self._shutting_down:
+            return
+        try:
+            self.modelsChanged.emit()
+        except RuntimeError:
+            pass          # C++ half already gone — nothing left to notify
+
+    def _set_wa_starting(self, v):
+        self._wa_starting = v
+        if self._shutting_down:
+            return
+        try:
+            self.waChanged.emit()
         except RuntimeError:
             pass          # C++ half already gone — nothing left to notify
 

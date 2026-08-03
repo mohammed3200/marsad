@@ -564,19 +564,41 @@ class AppService:
         return self._contacts.get_employees(dept or None, sub_dept or None)
 
     def add_employee(self, emp):
-        return self._contacts.add_employee(dict(emp or {}))
+        try:
+            return self._contacts.add_employee(dict(emp or {}))
+        except Exception as e:
+            log.warning("add employee failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر إضافة الموظف: {friendly_fs_error(e)}")
+            raise
 
     def update_employee(self, emp_id, fields):
-        return self._contacts.update_employee(emp_id, dict(fields or {}))
+        try:
+            return self._contacts.update_employee(emp_id, dict(fields or {}))
+        except Exception as e:
+            log.warning("update employee failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر تحديث الموظف: {friendly_fs_error(e)}")
+            raise
 
     def delete_employee(self, emp_id):
-        return self._contacts.delete_employee(emp_id)
+        try:
+            return self._contacts.delete_employee(emp_id)
+        except Exception as e:
+            log.warning("delete employee failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر حذف الموظف: {friendly_fs_error(e)}")
+            raise
 
     def sync_contacts(self):
         maps = self._contacts.export_to_config()
-        self._settings["email_dept_map"] = maps["email_dept_map"]
-        self._settings["whatsapp_groups"] = maps["whatsapp_groups"]
-        save_settings(self._settings)
+        merged = dict(self._settings)
+        merged["email_dept_map"] = maps["email_dept_map"]
+        merged["whatsapp_groups"] = maps["whatsapp_groups"]
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("contacts sync save failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر مزامنة جهات الاتصال: {friendly_fs_error(e)}")
+            return
+        self._settings = merged
         self._emit("settings_changed")
         # أعد بناء المحور حتى تسري خرائط التوجيه الجديدة على الموصّلات فوراً
         self._rebuild_hub()
@@ -626,8 +648,18 @@ class AppService:
         snap = {k: self._settings.get(k) for k in ENGINE_KEYS}
         snap["name"] = name
         profiles.append(snap)
-        self._settings["engine_profiles"] = profiles
-        save_settings(self._settings)
+        # Write a copy, not self._settings in place: a failed write must
+        # leave self._settings exactly as it was — matching save_settings()'s
+        # own merge-then-write-then-assign shape.
+        merged = dict(self._settings)
+        merged["engine_profiles"] = profiles
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("engine profile save failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر حفظ الملف: {friendly_fs_error(e)}")
+            return False
+        self._settings = merged
         self._emit("settings_changed")
         self._emit("notify", message=f"حُفظ الملف «{name}»")
         return True
@@ -647,8 +679,15 @@ class AppService:
     def delete_engine_profile(self, name):
         profiles = [p for p in self._settings.get("engine_profiles", [])
                     if p.get("name") != name]
-        self._settings["engine_profiles"] = profiles
-        save_settings(self._settings)
+        merged = dict(self._settings)
+        merged["engine_profiles"] = profiles
+        try:
+            save_settings(merged)
+        except Exception as e:
+            log.warning("engine profile delete failed: %s", e, exc_info=True)
+            self._emit("notify", message=f"تعذّر حذف الملف: {friendly_fs_error(e)}")
+            return False
+        self._settings = merged
         self._emit("settings_changed")
         self._emit("notify", message=f"حُذف الملف «{name}»")
         return True

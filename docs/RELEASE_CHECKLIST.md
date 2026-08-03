@@ -5,7 +5,7 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 112 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 145 tests, all pass
 - [ ] `python3 tools/test_api.py` — 7 tests, all pass
 - [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
@@ -48,6 +48,18 @@ defects are known and deferred with it:
 - Upload size and count caps are enforced *after* Starlette has already buffered and
   spooled the whole request, so they bound the copy written to `uploads/`, not the
   disk and bandwidth consumed receiving it.
+- `send_email_report` never got the desktop's async + snapshot + guard-flag
+  treatment (see `AppController.sendEmailReport`/`_run_send_email`): it runs
+  SMTP synchronously on the request thread instead of a background thread, and
+  does not snapshot `self._results`/recipients/`self._hub` before the blocking
+  call, so a concurrent `PUT /api/settings` or dashboard clear can rebind them
+  mid-send.
+- `switch_engine_profile` still mutates `self._settings` in place before calling
+  `save_settings({})`, the exact anti-pattern the desktop's
+  `switchEngineProfile` was rewritten to remove (building the changed-keys dict
+  first and routing through `save_settings()` in one call) — a failed write here
+  leaves the in-memory engine already switched while `settings.json` still holds
+  the old profile.
 
 **Desktop limitations:**
 
@@ -65,9 +77,6 @@ defects are known and deferred with it:
   (the `g` stays glued to `core`), and `العقد` is a genuine homograph — "the contract"
   and "the decade" are identical, so `عقد`/`عقود` match only bare tokens. Unmatched
   files land in `admin` for manual triage, which is the safe direction.
-- `core/errors.py::friendly_error()` falls back to «تعذّر الاتصال: …» with a truncated
-  raw tail for any error it does not recognise. That names the wrong cause for a
-  non-network failure — e.g. a programming error reads as a connection failure.
 
 ## Do not
 

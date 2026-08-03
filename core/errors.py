@@ -67,8 +67,17 @@ def friendly_error(raw) -> str:
     for keys, msg in _RULES:
         if any(k in low for k in keys):
             return msg
+    # Cause-neutral, not "تعذّر الاتصال" (connection failure): everything
+    # above this point is provider/network-shaped (HTTP codes, timeouts,
+    # DNS…), but anything that falls through unmatched is just as likely a
+    # local programming error (e.g. 'NoneType' object has no attribute) as
+    # a network one — claiming "connection" for those is a false diagnosis.
+    # The truncated raw tail stays: several callers (e.g.
+    # AppController._run_send_email) route straight into this fallback
+    # without a prior log.warning(raw), so dropping it would leave that
+    # failure completely untraceable, not just imprecisely labelled.
     flat = " ".join(text.split())
-    return f"تعذّر الاتصال: {flat[:80]}"
+    return f"خطأ غير متوقع: {flat[:80]}"
 
 
 _FS_RULES = {

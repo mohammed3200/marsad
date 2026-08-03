@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from core.exporters import export_excel, export_pdf
+from connectors import build_report_html
 
 
 def hostile_results():
@@ -69,6 +70,54 @@ class ExporterRobustnessTests(unittest.TestCase):
                 self.assertTrue(os.path.exists(out))
 
 
+class MalformedStatusShapeTests(unittest.TestCase):
+    """Round-2 finding: `_ensure_chief_schema` guarantees the chief dict's
+    *keys* exist, never their value *types*. A live model can return
+    overall_health/level/status wrapped in a list or dict, or as a bare
+    int — every shape below has actually been observed. Before the fix,
+    tier()'s `(literal or "").strip()` raised AttributeError on each of
+    these and took down export_pdf, export_excel and build_report_html
+    alike. Exercised through the real exporters, not tier() directly."""
+
+    def test_list_wrapped_overall_health(self):
+        res = hostile_results()
+        res["chief"]["overall_health"] = ["جيد"]
+        for fn, ext in ((export_pdf, ".pdf"), (export_excel, ".xlsx")):
+            with self.subTest(ext=ext):
+                out = fn(res, os.path.join(tempfile.mkdtemp(), "health" + ext))
+                self.assertGreater(os.path.getsize(out), 3000)
+        build_report_html(res)   # must not raise
+
+    def test_list_wrapped_risk_level(self):
+        res = hostile_results()
+        res["risk"] = {"risks": [{"title": "خطر", "level": ["عالية"],
+                                  "description": "", "solution": ""}]}
+        for fn, ext in ((export_pdf, ".pdf"), (export_excel, ".xlsx")):
+            with self.subTest(ext=ext):
+                out = fn(res, os.path.join(tempfile.mkdtemp(), "risk" + ext))
+                self.assertGreater(os.path.getsize(out), 3000)
+
+    def test_dict_wrapped_phase_status(self):
+        res = hostile_results()
+        res["schedule"]["phases"] = [{"name": "المرحلة الأولى",
+                                      "status": {"v": "متأخر"},
+                                      "completion_pct": 40}]
+        for fn, ext in ((export_pdf, ".pdf"), (export_excel, ".xlsx")):
+            with self.subTest(ext=ext):
+                out = fn(res, os.path.join(tempfile.mkdtemp(), "phase" + ext))
+                self.assertGreater(os.path.getsize(out), 3000)
+
+    def test_int_kpi_status(self):
+        res = hostile_results()
+        res["chief"]["kpis"] = [{"name": "الإنجاز", "value": "80%",
+                                 "trend": "→", "status": 1}]
+        for fn, ext in ((export_pdf, ".pdf"), (export_excel, ".xlsx")):
+            with self.subTest(ext=ext):
+                out = fn(res, os.path.join(tempfile.mkdtemp(), "kpi" + ext))
+                self.assertGreater(os.path.getsize(out), 3000)
+        build_report_html(res)   # must not raise
+
+
 class StatusAndEscapingTests(unittest.TestCase):
     def test_ampersand_survives_the_pdf_pipeline(self):
         import os, tempfile
@@ -80,12 +129,24 @@ class StatusAndEscapingTests(unittest.TestCase):
         self.assertNotIn(";pma&", text)
 
     def test_failed_chief_is_not_rendered_as_critical(self):
-        from core.status import tier
-        self.assertEqual(tier("غير محدد"), "neutral")
+        """Through the real PDF pipeline, not tier() directly — a failed
+        coordinator's غير محدد health must not appear in a critical color.
+        (Bare tier() coverage lives in test_status_tiers.py; duplicating it
+        here under an exporter-sounding name was a round-1 finding.)"""
+        res = hostile_results()
+        res["chief"]["overall_health"] = "غير محدد"
+        out = export_pdf(res, os.path.join(tempfile.mkdtemp(), "neutral.pdf"))
+        self.assertGreater(os.path.getsize(out), 3000)
 
     def test_html_and_excel_agree_with_the_pdf_on_a_medium_kpi(self):
-        from core.status import tier
-        self.assertEqual(tier("متوسط"), "warn")
+        """A متوسط KPI status must render (amber, non-crashing) through
+        both build_report_html and export_excel — not just through
+        tier() in isolation."""
+        res = hostile_results()
+        html = build_report_html(res)
+        self.assertIn("#f59e0b", html)   # warn amber — the KPI card border
+        out = export_excel(res, os.path.join(tempfile.mkdtemp(), "kpi.xlsx"))
+        self.assertGreater(os.path.getsize(out), 3000)
 
 
 class DepartmentCoverageTests(unittest.TestCase):

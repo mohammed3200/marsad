@@ -39,6 +39,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tests._isolation import isolated_state  # noqa: E402
 
+import backend.controller as controller_mod  # noqa: E402
 from backend.controller import AppController  # noqa: E402
 from backend.analysis_worker import AnalysisWorker  # noqa: E402
 from core.engine import AgentsEngine, WORKER_AGENTS  # noqa: E402
@@ -128,6 +129,37 @@ class _CountingAI:
         if self.delay:
             time.sleep(self.delay)
         return {"ok": True}
+
+
+class _FastFinishingWorker(QObject):
+    """Stands in for AnalysisWorker — same signal shape and constructor,
+    but run() finishes immediately with a canned result instead of calling
+    the engine.
+
+    Regression context: this test used to stub `c._ai = _CountingAI(...)`
+    to keep runAnalysis() from making real network calls, but task 16
+    changed runAnalysis() to build its own fresh `AIEngine(dict(self._settings))`
+    inside a fresh `AgentsEngine` — c._ai is never read, so that stub was
+    silently inert. The suite stayed green only because nothing was
+    listening on the default ollama_url in CI; on a machine actually
+    running Ollama (the documented default) this made 11 real model calls
+    and failed. Patch AnalysisWorker itself instead, exactly like
+    tests/test_settings_isolation.py's _CapturingWorker does — except this
+    test needs run() to actually *finish* (to exercise thread.finished ->
+    worker.deleteLater()), so it emits `finished` right away rather than
+    idling forever."""
+    agentState = Signal(str, str)
+    progress   = Signal(int)
+    log        = Signal(str)
+    finished   = Signal("QVariant")
+    failed     = Signal(str)
+
+    def __init__(self, engine, reports):
+        super().__init__()
+
+    @Slot()
+    def run(self):
+        self.finished.emit({"chief": {}})
 
 
 class ShutdownTests(unittest.TestCase):
@@ -302,7 +334,11 @@ class ShutdownTests(unittest.TestCase):
             c = AppController()
             self.addCleanup(c.deleteLater)
 
-            c._ai = _CountingAI(delay=0.0)
+            original_worker_cls = controller_mod.AnalysisWorker
+            controller_mod.AnalysisWorker = _FastFinishingWorker
+            self.addCleanup(setattr, controller_mod, "AnalysisWorker",
+                             original_worker_cls)
+
             c._reports.add({"source": "upload", "dept": "ops", "from": "f",
                              "date": "2026-07-28", "content": "c"})
 
@@ -336,6 +372,13 @@ class ShutdownTests(unittest.TestCase):
         the daemon thread to `threading.excepthook` and prints "Exception in
         thread Thread-N" — exactly the symptom this task removes.
 
+        Extended by the whole-branch review to cover `_set_models_busy` /
+        `_set_wa_starting` (`_run_fetch_models`, `_run_bridge_start`) —
+        those two had bare `self._x = v; self.xChanged.emit()` in their own
+        `finally` blocks, the exact same daemon-thread shape, and this
+        test's own coverage of only the first four setters is why the
+        round-1 through round-3 reviews of this task never caught it.
+
         Checked with `_shutting_down` both False and True: shutdown() can
         flip that flag between the setter's own guard check and the .emit()
         call, so the `try/except RuntimeError` around the emit — not the
@@ -347,6 +390,8 @@ class ShutdownTests(unittest.TestCase):
                     (AppController._set_testing_engine, "_testing_engine"),
                     (AppController._set_testing_email, "_testing_email"),
                     (AppController._set_collecting, "_collecting"),
+                    (AppController._set_models_busy, "_models_busy"),
+                    (AppController._set_wa_starting, "_wa_starting"),
                 ):
                     c = AppController()
                     c._shutting_down = shutting_down
