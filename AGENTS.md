@@ -8,7 +8,7 @@ Guidance for AI coding agents working in this repository. Assumes no prior knowl
 
 Key facts that shape every change:
 
-- UI text, agent prompts, and output JSON keys/values are **all in Arabic — preserve Arabic strings verbatim when editing**. Qt shapes and orders Arabic natively (HarfBuzz + BiDi); no reshaper/bidi libraries are used.
+- UI text, agent prompts, and output JSON keys/values are **all in Arabic — preserve Arabic strings verbatim when editing**. Qt shapes and orders Arabic natively (HarfBuzz + BiDi) for the on-screen UI, so the QML layer needs no reshaper — but the **PDF exporter does**: reportlab shapes nothing on its own, so `core/exporters.py` depends on `arabic-reshaper` + `python-bidi`. Both are required; removing them breaks every PDF export.
 - Data flows one direction: **connectors → AgentsEngine → `results` dict → exporters/UI**. The `results` dict (keyed by agent id: `chief`, `risk`, `cost`, `schedule`, …) is the single contract every layer reads. Changing an agent's output schema means updating its consumers (`core/exporters.py`, `connectors.build_report_html`, and the QML that reads it) too.
 - Design language: **Light Executive Report** — white paper, near-black ink, one deep teal-green accent (`#0E6E60`), no cards, structure by hairline rules, right-hand RTL sidebar nav. Colour is rationed: status shows as a small dot, never a wall of tint. Keep it calm.
 
@@ -25,15 +25,22 @@ The interpreter that launches the app must have **all** of requirements.txt — 
 
 Requires a running LLM backend — a local **Ollama** server (`ollama pull llama3.2`, default) or an API key for Claude / OpenAI-compatible / Gemini / Azure OpenAI. All providers and all data sources (email, ERP folder, WhatsApp) are configured from the **الإعدادات (Settings)** tab in the app — no hand-editing of `settings.json` is needed at runtime.
 
-### Web UI (`web/` → served by the API)
+### Tests
 
 ```bash
-cd web && npm install && npm run build   # → web/dist
-python -m api                            # http://127.0.0.1:8765/ — SPA at /, REST /api, WS /ws
-cd web && npm run dev                    # dev loop: Vite proxies /api + /ws to 127.0.0.1:8765
+python3 -m unittest discover -s tests -v   # 112 tests, stdlib unittest, no extra dependency
+python3 tools/test_api.py                  # REST smoke suite (7 tests)
 ```
 
-**No test suite and no linter exist in this project.** Verification is manual: run the app (`python app.py`) or render pages offscreen with the screenshot harness (below). There is no CI test job — CI only builds installers.
+Every test runs inside `tests/_isolation.py::isolated_state()`, which redirects each
+writable-state module global into a temp directory. **Nothing in `tests/` may touch the real
+`settings.json`, `reports/` or `data/`** — that rule is load-bearing, not stylistic: an earlier
+version of `tools/test_api.py` ran against the real data directory and destroyed a user's last
+analysis when a run was interrupted. There is no linter. CI builds installers only; it does not
+yet run the suite.
+
+Beyond the suite, render the six pages offscreen with the screenshot harness (below) to check
+the UI, since QML layout is not unit-tested.
 
 ### Build installers
 
@@ -61,8 +68,9 @@ app.py                 Qt entry — QApplication (RTL) → bundled fonts → The
 core/                  UI-agnostic logic (no Qt import allowed)
 connectors.py          Email / ERP / WhatsApp ingestion + outbound email
 backend/               Qt bridge — theme, controller, worker, models, settings
-api/                   Qt-free FastAPI backend — REST (/api) + WebSocket (/ws) over AppService; mounts web/dist at /
-web/                   Web UI — React + TS + Vite + Tailwind v4 (RTL), builds to web/dist
+api/                   Qt-free FastAPI backend — REST (/api) + WebSocket (/ws) over AppService.
+                       NOT SHIPPED this release: refuses to import without MARSAD_API_ENABLE=1
+tests/                  stdlib unittest suite; _isolation.py keeps it off real user data
 qml/                   Flat QML tree — Main + 6 pages + flat primitives
 assets/fonts/          Bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL)
 tools/                 capture_qt.py (screenshots) · build_linux.sh
@@ -95,16 +103,15 @@ packaging/             linux/build_deb.sh + marsad.desktop · windows/marsad.nsi
 
 ### `api/` — Qt-free web backend (FastAPI)
 
-`api/services.py::AppService` mirrors `AppController` without Qt (same state, guard flags, Arabic notify strings, daemon-thread model) and broadcasts plain event dicts to subscribers; `api/app.py` exposes them as REST (`/api`, interactive docs at `/api/docs`) + one WebSocket (`/ws` — `state_snapshot` on connect, then every event, including `models_fetched` / `wa_qr` / `wa_status`). Beyond the controller's surface it also serves: exports listing/download (`/api/exports[/name]`, reports-dir confined), recipients, engine profiles (`/api/engine/profiles*`), async provider model listing (`/api/settings/models`), and the WhatsApp bridge start (`/api/whatsapp/link`). Local-only: `python -m api` binds 127.0.0.1:`$MARSAD_PORT` (default 8765). If `web/dist/index.html` exists it is mounted at `/`. Full contract: `api/README.md`.
+`api/services.py::AppService` mirrors `AppController` without Qt (same state, guard flags, Arabic notify strings, daemon-thread model) and broadcasts plain event dicts to subscribers; `api/app.py` exposes them as REST (`/api`, interactive docs at `/api/docs`) + one WebSocket (`/ws` — `state_snapshot` on connect, then every event, including `models_fetched` / `wa_qr` / `wa_status`). Beyond the controller's surface it also serves: exports listing/download (`/api/exports[/name]`, reports-dir confined), recipients, engine profiles (`/api/engine/profiles*`), async provider model listing (`/api/settings/models`), and the WhatsApp bridge start (`/api/whatsapp/link`). Local-only: `python -m api` binds 127.0.0.1:`$MARSAD_PORT` (default 8765). **Not shipped in this release:** `api/app.py` raises on import unless `MARSAD_API_ENABLE=1` is set, it has no authentication, and several concurrency defects fixed on the desktop side remain open here — see the known-limitations list in `docs/RELEASE_CHECKLIST.md`. `GET /api/settings` redacts every secret, top-level and inside saved engine profiles. Full contract: `api/README.md`.
 
-### `web/` — the web UI (React + TypeScript)
+### There is no `web/` directory
 
-**Status: canceled (2026-07).** The web-UI direction was dropped — the app is
-desktop-native (Qt/QML) with Arabic as a first-class citizen. The `web/` files are kept on
-disk for reference only; do not build on them. The `api/` backend remains supported as the
-headless/alternate interface.
-
-Vite + React + TypeScript (strict) + Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first `@theme` in `src/theme.css` — the `backend/theme.py` tokens ported verbatim, plus semantic aliases like `--color-red`/`--color-amber`/`--color-border`). Runtime deps are react/react-dom **only**: page switching is a state index (StackLayout semantics, landing = لوحة التحكم), live state is one reconnecting WebSocket in `src/lib/store.ts` (external store + `useSyncExternalStore`; selectors must return stable refs, composites use `useMemo`), REST in `src/lib/api.ts`. Pages/components port the QML 1:1 — same Arabic strings verbatim, RTL logical properties, JetBrains Mono + `dir="ltr"` islands for numbers/paths/emails, hairline rules instead of cards, status as dots/words. Build: `cd web && npm install && npm run build` → `web/dist` (served at `/` by the API); dev: `npm run dev` proxies `/api` + `/ws`.
+Earlier revisions of this document described a React + TypeScript web UI and gave build
+commands for it. **That directory has never existed** — not on disk and not in any commit in
+this repository's history. The web-UI direction was considered and dropped; the app is
+desktop-native (Qt/QML) with Arabic as a first-class citizen. Do not look for `web/`, and do
+not restore the build commands.
 
 ## Configuration & data files
 

@@ -208,8 +208,10 @@ config and output and never ship. `settings.example.json` (blank credentials) is
 entered in the app sync their email/WhatsApp → department routing back into `settings.json` via the
 **مزامنة مع الإعدادات** button.
 
-- **Uploaded files** are read in place from wherever you picked them — no copies are made or kept.
-  (`uploads/` exists as an empty, gitignored scratch directory; nothing is written to it.)
+- **Uploaded files** picked in the desktop app are read in place from wherever you picked them —
+  no copies are made. The optional web API is different: files sent to `POST /api/reports/files`
+  are saved under `uploads/api_<timestamp>/` and kept there until you delete them. `uploads/` is
+  gitignored either way.
 - **WhatsApp session** — «توليد ملف الجسر» writes `whatsapp_bridge.js` (with the per-session
   `X-WA-Token`, also stored as `whatsapp_token` in `settings.json`), and running it creates
   `wa_session/` holding your live WhatsApp login. Both live under the per-user data dir

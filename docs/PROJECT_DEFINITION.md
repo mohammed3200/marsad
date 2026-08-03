@@ -43,20 +43,20 @@ sit on top.
 ```
 ┌──────────────────────────── Presentation layers ───────────────────────────┐
 │  app.py + backend/ + qml/   PySide6 / Qt Quick (QML) desktop UI — production│
-│  api/                       FastAPI REST + WebSocket backend (Qt-free)      │
-│                             serves the built web UI at /                    │
-│  web/                       React + TS + Vite + Tailwind v4 web UI (RTL)    │
-│                             builds to web/dist (mounted by the API)         │
+│  api/                       FastAPI REST + WebSocket backend (Qt-free);     │
+│                             experimental, not shipped — gated by an env var │
 ├──────────────────────────── UI-agnostic core ──────────────────────────────┤
 │  core/engine.py      AIEngine (5 LLM backends) + AgentsEngine (11 agents)   │
 │  core/exporters.py   PDF (reportlab) + Excel (openpyxl) report generation   │
 │  core/contacts.py    ContactsDB — org chart + employee directory (JSON)     │
 │  core/hijri.py       Gregorian→Hijri conversion, dual date label            │
-│  core/errors.py      friendly_error() — raw errors → actionable Arabic      │
+│  core/errors.py      friendly_error()/friendly_fs_error() → Arabic errors   │
+│  core/status.py      tier() — one status-tier table for every output        │
 │  core/paths.py       BUNDLE_DIR (read-only) vs DATA_DIR (writable) split    │
 │  connectors.py       Email / ERP / WhatsApp ingestion + outbound email      │
 ├──────────────────────────── Support ───────────────────────────────────────┤
 │  backend/ (Qt bridge) · qml/ (declarative UI) · assets/fonts (bundled TTFs) │
+│  tests/ (stdlib unittest) — isolated_state() keeps it off real user data    │
 │  tools/ (screenshots, API smoke test, deb build) · packaging/ (deb, NSIS)   │
 │  marsad.spec / marsad_api.spec (PyInstaller) · .github/workflows (CI)       │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -72,8 +72,8 @@ sit on top.
 | `connectors.py` | All ingestion + outbound email (also UI-agnostic) |
 | `backend/` | Qt bridge: `theme.py` (design tokens), `controller.py` (`AppController` — the object QML talks to), `analysis_worker.py` (QThread), `models.py` (list models), `settings_bridge.py` (settings load/save) |
 | `qml/` | Flat QML tree: `Main.qml` shell + 6 pages + flat primitives; files auto-import each other by filename |
-| `api/` | Qt-free web backend: `app.py` (FastAPI routes + WS), `services.py` (`AppService` — mirrors `AppController` without Qt), `__main__.py` (uvicorn launcher), `README.md` (contract doc) |
-| `web/` | Web UI: React + TypeScript + Vite + Tailwind CSS v4 (RTL). `src/lib` (typed REST client, WS external store), `src/components`, `src/pages` (6 pages porting the QML). Builds to `web/dist` (gitignored, served at `/` by the API) |
+| `api/` | Qt-free web backend: `app.py` (FastAPI routes + WS), `services.py` (`AppService` — mirrors `AppController` without Qt), `__main__.py` (uvicorn launcher), `README.md` (contract doc). **Not shipped in this release** — `app.py` refuses to import unless `MARSAD_API_ENABLE=1` is set; no build in CI produces an API bundle |
+| `tests/` | Unit + integration test suite (stdlib `unittest`, no extra dependency). `_isolation.py::isolated_state()` redirects every writable-state module global into a temp dir — every test file uses it so the suite never touches the real `settings.json`, `reports/`, or `data/` |
 | `assets/fonts/` | Bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL) |
 | `assets/marsad.png`, `marsad.ico` | Brand mark |
 | `data/contacts.json` | Authoritative org chart + employee directory (gitignored) |
@@ -510,9 +510,9 @@ A new UI or framework must preserve these, or the system breaks:
 |---|---|
 | `core/` + `connectors.py` | Complete, production-proven |
 | Qt/QML desktop app (`app.py` + `backend/` + `qml/`) | Complete — the production UI |
-| FastAPI backend (`api/`) | Complete REST + WS mirror of the controller (incl. exports listing/download, recipients, engine profiles, model fetch, WhatsApp link/QR events); serves `web/dist` at `/` when present |
-| Web frontend (`web/`) | **Complete** — React + TS + Vite + Tailwind v4, RTL; all 6 pages port the QML UI; built to `web/dist` and served at `/` by the API |
-| Tests | None (manual verification only); `tools/test_api.py` is an API smoke script; `tools/capture_qt.py` renders QML screenshots |
+| FastAPI backend (`api/`) | **Not shipped this release.** A REST + WS mirror of the controller, but `api/app.py` refuses to import without `MARSAD_API_ENABLE=1`, it has no authentication, and several concurrency defects fixed on the desktop side remain open here. See the known-limitations list in `docs/RELEASE_CHECKLIST.md` |
+| Web frontend | **Does not exist.** A React web UI was considered and dropped; no `web/` directory has ever existed in this repository |
+| Tests | `python3 -m unittest discover -s tests -v` — 112 tests, stdlib `unittest`, isolated from real user data by `tests/_isolation.py`. Plus `python3 tools/test_api.py` (7) and `tools/capture_qt.py` for QML screenshots. No linter; CI does not yet run the suite |
 | Packaging | PyInstaller specs (desktop `marsad.spec`, API `marsad_api.spec`), Linux `.deb`, Windows NSIS (CI on `v*` tags) |
 | LLM backends | 5 implemented; runtime requires a reachable provider (local Ollama by default) |
 
