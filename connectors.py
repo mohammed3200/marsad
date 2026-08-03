@@ -14,6 +14,7 @@
 import imaplib
 import smtplib
 import email
+import html as _html
 import json
 import os
 import datetime
@@ -21,6 +22,8 @@ import threading
 import time
 import logging
 import secrets
+import ssl
+import re
 from email.header     import decode_header
 from email.mime.text  import MIMEText
 from email.mime.multipart   import MIMEMultipart
@@ -28,10 +31,31 @@ from email.mime.application import MIMEApplication
 from pathlib import Path
 
 try:
-    from core.paths import DATA_DIR as _DATA_DIR
-    LOG_DIR = _DATA_DIR / "logs"
+    from core.paths import DATA_DIR, BUNDLE_DIR
+    from core.errors import friendly_error, friendly_fs_error
+    from core.status import tier
+    # Same coercion core/exporters.py uses before touching a results field —
+    # build_report_html is the third consumer of the frozen `results`
+    # contract (PDF, Excel, email HTML) and needs the same tolerance for
+    # shapes a model actually returns (top_actions as a bare string or a
+    # list of strings, kpis as a dict, …). core.exporters imports only
+    # core.status/core.paths (never connectors), so importing it here does
+    # not create a cycle.
+    from core.exporters import _obj, _rows
+    LOG_DIR = DATA_DIR / "logs"
 except Exception:  # pragma: no cover — core not importable in isolation
-    LOG_DIR = Path(__file__).parent / "logs"
+    DATA_DIR = BUNDLE_DIR = Path(__file__).parent
+    LOG_DIR = DATA_DIR / "logs"
+    def friendly_error(raw):
+        return str(raw)
+    def friendly_fs_error(exc):
+        return str(exc)
+    def tier(_literal):
+        return "neutral"
+    def _obj(value):
+        return value if isinstance(value, dict) else {}
+    def _rows(value):
+        return value if isinstance(value, list) else []
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -42,6 +66,30 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# TLS for every outbound mail connection. Without an explicit context both
+# imaplib and smtplib fall back to ssl._create_stdlib_context(), which is
+# CERT_NONE with check_hostname disabled — i.e. no verification at all.
+SSL_CONTEXT = ssl.create_default_context()
+
+# Per-report content ceiling. Whatever a reader returns goes verbatim into an
+# agent prompt and out to a third-party API, so an uncapped reader is both a
+# memory and a cost problem. xlsx/csv/json cap themselves; the rest use _cap().
+MAX_CHARS = 40_000
+
+
+def _cap(text: str) -> str:
+    text = text or ""
+    if len(text) <= MAX_CHARS:
+        return text
+    return text[:MAX_CHARS] + "\n\n[اقتُطع النص — تجاوز الحد المسموح]"
+
+
+# WhatsAppReceiver.do_POST reads Content-Length bytes into memory before
+# parsing JSON — a second local HTTP server with the same unbounded-body risk
+# the upload endpoint (api/app.py) had. A WhatsApp message body has no
+# business being megabytes; MAX_CHARS-scale, times 4 for UTF-8 (Arabic runs
+# ~2 bytes/char) and JSON structure/escaping overhead around the text field.
+MAX_WA_BODY_BYTES = MAX_CHARS * 4
 
 # ════════════════════════════════════════════════════
 # 1. موصّل البريد الإلكتروني
@@ -69,14 +117,16 @@ class EmailConnector:
         if not self.user or not self.password:
             return False, "لم تُدخَل بيانات البريد في الإعدادات"
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=10)
+            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=10, ssl_context=SSL_CONTEXT)
             mail.login(self.user, self.password)
             mail.logout()
             return True, f"✓ الاتصال بـ {self.user} ناجح"
         except imaplib.IMAP4.error as e:
-            return False, f"خطأ في تسجيل الدخول: {e}"
+            log.warning(f"IMAP login failed for {self.user}: {e}")
+            return False, friendly_error(str(e))
         except Exception as e:
-            return False, f"خطأ في الاتصال: {e}"
+            log.warning(f"IMAP connection failed ({self.imap_host}): {e}")
+            return False, friendly_error(str(e))
 
     def fetch_new(self) -> list:
         """سحب الرسائل الجديدة غير المقروءة"""
@@ -84,7 +134,7 @@ class EmailConnector:
             return []
         reports = []
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_host)
+            mail = imaplib.IMAP4_SSL(self.imap_host, timeout=20, ssl_context=SSL_CONTEXT)
             mail.login(self.user, self.password)
             mail.select("INBOX")
             _, ids = mail.search(None, "UNSEEN")
@@ -140,8 +190,8 @@ class EmailConnector:
                     part.add_header("Content-Disposition", "attachment",
                                     filename=os.path.basename(path))
                     msg.attach(part)
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as srv:
-                srv.starttls()
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=20) as srv:
+                srv.starttls(context=SSL_CONTEXT)
                 srv.login(self.user, self.password)
                 srv.sendmail(self.user, recipients, msg.as_bytes())
             log.info(f"أُرسل التقرير إلى: {recipients}")
@@ -189,7 +239,7 @@ class EmailConnector:
         if self.contacts:
             emp = self.contacts.find_by_email(sl.split("<")[-1].strip(">").strip())
             if emp:
-                from contacts_manager import DEPT_KEY_MAP
+                from core.contacts import DEPT_KEY_MAP
                 return DEPT_KEY_MAP.get(emp.get("sub_dept", ""), "admin")
         # 2. من الخريطة الثابتة
         for addr, dept in self.dept_map.items():
@@ -207,8 +257,8 @@ class EmailConnector:
             if ct == "text/plain" and "attachment" not in disp:
                 try:
                     charset = part.get_content_charset() or "utf-8"
-                    body    = part.get_payload(decode=True).decode(
-                                  charset, errors="ignore")
+                    body    = _cap(part.get_payload(decode=True).decode(
+                                  charset, errors="ignore"))
                 except Exception:
                     pass
             elif ct == "application/pdf":
@@ -226,7 +276,7 @@ class EmailConnector:
         try:
             import PyPDF2, io
             reader = PyPDF2.PdfReader(io.BytesIO(data))
-            return "\n".join(p.extract_text() or "" for p in reader.pages)
+            return _cap("\n".join(p.extract_text() or "" for p in reader.pages))
         except Exception:
             return "[PDF — تعذّر استخراج النص]"
 
@@ -280,10 +330,20 @@ async function start() {
         printQRInTerminal: true
     })
     sock.ev.on('creds.update', saveCreds)
+    async function post(pathname, body) {
+        try {
+            const fetch = (await import('node-fetch')).default
+            await fetch(`http://localhost:5051${pathname}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-WA-Token': '__WA_TOKEN__' },
+                body: JSON.stringify(body)
+            })
+        } catch(e) {}
+    }
     sock.ev.on('connection.update', ({ connection, qr }) => {
-        if (qr)         console.log('[WA] امسح QR Code الآن...')
-        if (connection === 'open')  console.log('[WA] متصل!')
-        if (connection === 'close') setTimeout(start, 3000)
+        if (qr)       { console.log('[WA] امسح QR Code الآن...'); post('/wa_qr', { qr }) }
+        if (connection === 'open')  { console.log('[WA] متصل!'); post('/wa_status', { linked: true, phone: (sock.user && sock.user.id) || '' }) }
+        if (connection === 'close') { post('/wa_status', { linked: false }); setTimeout(start, 3000) }
     })
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
@@ -351,7 +411,8 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
         except FileNotFoundError:
             return False, "Node.js غير مثبت — حمّله من nodejs.org"
         except Exception as e:
-            return False, str(e)
+            log.warning("node.js version check failed: %s", e, exc_info=True)
+            return False, friendly_fs_error(e)
 
     @staticmethod
     def install_packages() -> bool:
@@ -387,16 +448,24 @@ class WhatsAppReceiver:
     on_message([report]). stdlib فقط — لا تبعيات جديدة."""
 
     def __init__(self, port: int, on_message, dept_fn=None, logger=print,
-                 token: str = ""):
+                 token: str = "", on_event=None):
         self.port       = int(port)
         self.on_message = on_message
+        self.on_event   = on_event      # (kind, payload) — kind ∈ "qr" | "status"
         self.dept_fn    = dept_fn or (lambda gid: "admin")
         self.log        = logger
         self.token      = token
         self._server    = None
         self._thread    = None
 
-    def start(self):
+    def _emit_event(self, kind, payload):
+        if self.on_event:
+            try:
+                self.on_event(kind, payload)
+            except Exception as e:
+                log.warning(f"واتساب: خطأ في حدث {kind}: {e}")
+
+    def start(self) -> bool:
         import http.server
         recv = self
 
@@ -414,15 +483,29 @@ class WhatsAppReceiver:
                 self._ok()
 
             def do_POST(self):
-                if self.path.rstrip("/") != "/wa_message":
+                path = self.path.rstrip("/")
+                if path not in ("/wa_message", "/wa_qr", "/wa_status"):
                     self.send_response(404); self.end_headers(); return
                 if recv.token and self.headers.get("X-WA-Token") != recv.token:
                     self.send_response(403); self.end_headers(); return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
-                    data   = json.loads(self.rfile.read(length) or b"{}")
                 except Exception:
                     self.send_response(400); self.end_headers(); return
+                if length < 0 or length > MAX_WA_BODY_BYTES:
+                    # Refuse before reading — do not pull an oversized body
+                    # into memory just to discard it.
+                    self.send_response(413); self.end_headers(); return
+                try:
+                    data = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    self.send_response(400); self.end_headers(); return
+                if path == "/wa_qr":
+                    recv._emit_event("qr", {"qr": data.get("qr", "")})
+                    self._ok(); return
+                if path == "/wa_status":
+                    recv._emit_event("status", data)
+                    self._ok(); return
                 text = (data.get("text") or "").strip()
                 gid  = data.get("group_id", "")
                 if text:
@@ -432,7 +515,7 @@ class WhatsAppReceiver:
                         "dept"   : recv.dept_fn(gid),
                         "from"   : data.get("sender") or gid or "واتساب",
                         "date"   : datetime.date.today().isoformat(),
-                        "content": text,
+                        "content": _cap(text),
                     }
                     try:
                         recv.on_message([rep])
@@ -441,10 +524,18 @@ class WhatsAppReceiver:
                         log.warning(f"واتساب: خطأ في المعالجة: {e}")
                 self._ok()
 
-        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        try:
+            self._server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        except OSError as e:
+            # friendly_error() هي لأخطاء مزوّدي الذكاء الاصطناعي عبر الشبكة — تطبيقها
+            # على فشل ربط منفذ محلي (EADDRINUSE) يعطي تشخيصاً مضللاً تماماً
+            self.log(f"تعذّر بدء المستقبِل على المنفذ {self.port}: {friendly_fs_error(e)}")
+            self._server = None
+            return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         self.log(f"[WA] المستقبِل يعمل على 127.0.0.1:{self.port}")
+        return True
 
     def stop(self):
         if self._server:
@@ -454,6 +545,9 @@ class WhatsAppReceiver:
             except Exception:
                 pass
             self._server = None
+        if self._thread:
+            self._thread.join(timeout=2)
+            self._thread = None
 
 
 # ════════════════════════════════════════════════════
@@ -464,26 +558,132 @@ class WhatsAppReceiver:
 DOC_PATTERNS = ["*.xlsx", "*.xls", "*.csv", "*.json", "*.txt", "*.pdf", "*.docx"]
 
 
+def is_internal_file(fpath) -> bool:
+    """True إذا كان الملف من ملفات التطبيق الداخلية — الإعدادات وجهات الاتصال
+    ومخرجات التحليل ليست تقارير ميدانية، و settings.json قد يحمل أسراراً لا
+    يجوز أن تدخل قائمة التقارير (ثم إلى المحرّك) أصلاً."""
+    try:
+        p = Path(fpath).resolve()
+    except Exception:
+        return False
+    names = {"settings.json", "settings.example.json",
+             "sample_reports.json", "whatsapp_bridge.js"}
+    for base in {DATA_DIR, BUNDLE_DIR}:
+        try:
+            if p.parent == Path(base).resolve() and p.name in names:
+                return True
+        except Exception:
+            pass
+    try:
+        if p == (DATA_DIR / "data" / "contacts.json").resolve():
+            return True
+        if p.suffix.lower() == ".json":
+            p.relative_to((DATA_DIR / "reports").resolve())
+            return True
+    except ValueError:
+        pass
+    except Exception:
+        pass
+    return False
+
+
+_DEPT_KEYWORDS = (
+    # (keyword, dept) — order matters: the first match wins
+    ("ran", "ran"), ("radio", "ran"), ("راديو", "ran"),
+    ("core", "core"), ("network", "core"), ("النواة", "core"),
+    ("quality", "quality"), ("جودة", "quality"),
+    ("safety", "safety"), ("سلامة", "safety"),
+    ("civil", "civil"), ("انشاء", "civil"), ("إنشاء", "civil"), ("مدني", "civil"),
+    ("cost", "cost"), ("finance", "cost"), ("تكاليف", "cost"), ("تكلفة", "cost"),
+    ("ميزانية", "cost"), ("مالية", "cost"),
+    ("contract", "contract"), ("عقد", "contract"), ("عقود", "contract"),
+    ("procure", "procure"), ("purchase", "procure"), ("مشتريات", "procure"),
+    ("supply", "supply"), ("warehouse", "supply"), ("مخازن", "supply"),
+    ("توريد", "supply"),
+    ("schedule", "schedule"), ("جدول", "schedule"), ("زمني", "schedule"),
+    ("ops", "ops"), ("operations", "ops"), ("عمليات", "ops"),
+)
+
+# Latin keywords must match whole words: "ran" inside "random"/"transfer"/
+# "grant"/"France" used to route unrelated files to the RAN department.
+# Digits are split separately so RAN2024 becomes tokens ["ran", "2024"] and "ran" matches.
+# NOTE: Patterns like 5Gcore are a known gap: "core" stays glued to the digit prefix,
+# making gcore a single token that doesn't match "core". Fixing this would require
+# domain-specific \dG generation-marker rules and is deferred (false negative accepted).
+_WORD_SPLIT = re.compile(r"[^a-z؀-ۿ]+")
+
+# Arabic keywords are matched as whole tokens too, not bare substrings: substring
+# containment let short roots match inside unrelated longer words (معقودة "convened"
+# contains عقد; مجدول "twisted/braided" wire contains جدول). Equality still has to
+# tolerate Arabic affixation — السلامة/بالسلامة must both reach سلامة — so each token
+# has its proclitics stripped before comparison. Multi-letter clusters (بال/وال/
+# فال/كال/لل) come before the single letters they're built from (ب/و/ف/ك/ل) so a
+# token like بالسلامة strips the whole cluster in one pass instead of stopping
+# after just ب.
+_ARABIC_PROCLITICS = ("بال", "وال", "فال", "كال", "لل", "ال", "و", "ب", "ل", "ف", "ك")
+
+# عقد/عقود are a genuine homograph, not a false substring hit: العقد is grammatically
+# identical ("ال" + root) whether the sense is "the contract" or "the decade" (خطة
+# العقد القادم = "next decade's plan"). Affix-stripping can't tell those apart, so
+# these two are compared as bare tokens only — no proclitic stripping — which still
+# catches ordinary contract filenames (عقد_المقاول.pdf, عقود_المقاولين.pdf) since
+# those rarely carry the definite article, while خطة_العقد_القادم.xlsx correctly
+# falls through to admin. No filename in the test set needs the "ال" form of either,
+# so this residual (a definite-article contract filename would be missed) is accepted
+# the same way the 5Gcore digit-glue gap is.
+_NO_STRIP_KEYWORDS = {"عقد", "عقود"}
+
+
+def _strip_arabic_proclitics(token: str) -> str:
+    for p in _ARABIC_PROCLITICS:
+        if token.startswith(p) and len(token) > len(p):
+            return token[len(p):]
+    return token
+
+
 def guess_dept(filename: str) -> str:
     """محاولة تخمين القسم من اسم الملف"""
-    fl = filename.lower()
-    mapping = {
-        "ran"      : "ran",   "radio"   : "ran",
-        "core"     : "core",  "network" : "core",
-        "quality"  : "quality","جودة"   : "quality",
-        "safety"   : "safety", "سلامة"  : "safety",
-        "civil"    : "civil",  "انشاء"  : "civil",
-        "cost"     : "cost",   "تكالف"  : "cost",
-        "finance"  : "cost",   "مالية"  : "cost",
-        "contract" : "contract","عقود"  : "contract",
-        "procure"  : "procure","مشتريات": "procure",
-        "supply"   : "supply", "مخازن"  : "supply",
-        "schedule" : "schedule","جدول"  : "schedule",
-    }
-    for key, dept in mapping.items():
-        if key in fl:
+    stem = str(filename).lower()
+    tokens = set(_WORD_SPLIT.split(stem)) - {""}
+    stripped_tokens = {_strip_arabic_proclitics(t) for t in tokens}
+    for keyword, dept in _DEPT_KEYWORDS:
+        if keyword.isascii():
+            if keyword in tokens:
+                return dept
+        elif keyword in _NO_STRIP_KEYWORDS:
+            if keyword in tokens:
+                return dept
+        elif keyword in tokens or keyword in stripped_tokens:
             return dept
     return "admin"
+
+
+# Document readers embed a placeholder straight into report *content* on
+# parse failure — that text flows into the LLM prompt, the InputPage report
+# list (qml/InputPage.qml reads model.content directly, unfiltered) and any
+# chief-agent summary that echoes source text back, and ends up in exported
+# PDFs/emails. It is not a notify/log call site so it sits outside the
+# friendly_error()/friendly_fs_error() contract those functions were built
+# for (provider/network vs. disk/socket errors) — but raw Python exception
+# text has no business there either, so classify it with a reader-specific
+# fallback that keeps whatever diagnostic signal is actually actionable
+# ("the file is corrupt") instead of echoing library internals.
+_CORRUPT_MARKERS = (
+    "badzipfile", "not a zip file", "package not found",
+    "invalidfileexception", "pdfreaderror", "eof marker not found",
+    "unsupported format", "bad magic number", "corrupt", "damaged",
+    "unexpected end of",
+)
+
+
+def _reader_error(exc: Exception) -> str:
+    """Classify a document-reader parse failure into short Arabic."""
+    if isinstance(exc, OSError):
+        return friendly_fs_error(exc)
+    text = f"{type(exc).__name__} {exc}".lower()
+    if any(m in text for m in _CORRUPT_MARKERS):
+        return "الملف تالف أو بصيغة غير مدعومة"
+    return "تعذّر فهم محتوى الملف"
 
 
 def _read_excel(fpath: Path) -> str:
@@ -503,7 +703,8 @@ def _read_excel(fpath: Path) -> str:
     except ImportError:
         return "[يحتاج مكتبة openpyxl — pip install openpyxl]"
     except Exception as e:
-        return f"[خطأ في قراءة Excel: {e}]"
+        log.warning(f"فشل قراءة Excel ({fpath.name}): {e}")
+        return f"[خطأ في قراءة Excel: {_reader_error(e)}]"
 
 
 def _read_csv(fpath: Path) -> str:
@@ -527,29 +728,34 @@ def _read_pdf(fpath: Path) -> str:
         import PyPDF2
         with open(fpath, "rb") as f:
             reader = PyPDF2.PdfReader(f)
-            return "\n".join(p.extract_text() or "" for p in reader.pages)
+            return _cap("\n".join(p.extract_text() or "" for p in reader.pages))
     except ImportError:
         return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
     except Exception as e:
-        return f"[خطأ في PDF: {e}]"
+        log.warning(f"فشل قراءة PDF ({fpath.name}): {e}")
+        return f"[خطأ في PDF: {_reader_error(e)}]"
 
 
 def _read_docx(fpath: Path) -> str:
     try:
         import docx
         doc = docx.Document(str(fpath))
-        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        return _cap("\n".join(p.text for p in doc.paragraphs if p.text.strip()))
     except ImportError:
         return "[يحتاج مكتبة python-docx — pip install python-docx]"
     except Exception as e:
-        return f"[خطأ في Word: {e}]"
+        log.warning(f"فشل قراءة Word ({fpath.name}): {e}")
+        return f"[خطأ في Word: {_reader_error(e)}]"
 
 
 def read_file_to_report(fpath, source: str = "upload",
                         dept: str = None, from_label: str = None) -> dict | None:
     """قراءة ملف واحد وتحويله إلى تقرير — يدعم xlsx/xls/csv/json/txt/pdf/docx.
-    يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ."""
+    يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ أو ملفات التطبيق الداخلية."""
     fpath = Path(fpath)
+    if is_internal_file(fpath):
+        log.warning(f"رُفض ملف داخلي كتقرير: {fpath.name}")
+        return None
     ext   = fpath.suffix.lower()
     dept  = dept or guess_dept(fpath.name)
 
@@ -560,7 +766,7 @@ def read_file_to_report(fpath, source: str = "upload",
     elif ext == ".json":
         content = _read_json(fpath)
     elif ext == ".txt":
-        content = fpath.read_text(encoding="utf-8", errors="ignore")
+        content = _cap(fpath.read_text(encoding="utf-8", errors="ignore"))
     elif ext == ".pdf":
         content = _read_pdf(fpath)
     elif ext == ".docx":
@@ -668,28 +874,55 @@ class ConnectorHub:
         self._buffer  = []
         self._lock    = threading.Lock()
         self._log_fn  = print
+        self._event_fn = None
         self.whatsapp = None
-        # الرمز يُحفظ في الإعدادات حتى يبقى ثابتاً عند إعادة بناء المحور —
-        # وإلا توقف ملف الجسر المولَّد سابقاً عن العمل (403)
-        self.wa_token = settings.get("whatsapp_token") or secrets.token_hex(16)
-        settings["whatsapp_token"] = self.wa_token
+        # الرمز يُحفظ في الإعدادات فور توليده حتى يبقى ثابتاً عبر عمليات
+        # التشغيل التالية — وإلا وُلِّد رمز مختلف في كل مرة فتوقف ملف الجسر
+        # المولَّد سابقاً عن العمل (403) دون أي سطر سجل يوضّح السبب
+        self.wa_token = settings.get("whatsapp_token") or ""
+        if not self.wa_token:
+            self.wa_token = secrets.token_hex(16)
+            settings["whatsapp_token"] = self.wa_token
+            try:
+                from backend.settings_bridge import save_settings
+                save_settings(settings, changed_keys={"whatsapp_token"})
+            except Exception as e:      # core لا يجوز أن يعتمد على backend اعتماداً صلباً
+                log.warning(f"could not persist whatsapp_token: {e}")
 
     def set_logger(self, fn):
         self._log_fn = fn
+
+    def set_event_handler(self, fn):
+        """معالج أحداث واتساب غير الرسائل: ("qr", payload) و ("status", payload)."""
+        self._event_fn = fn
 
     # ── واتساب ──
     def _wa_dept(self, group_id: str) -> str:
         groups = self.settings.get("whatsapp_groups", {})
         return groups.get(group_id) or groups.get(str(group_id), "admin")
 
-    def start_whatsapp(self, port: int = 5051):
+    def start_whatsapp(self, port: int = 5051) -> bool:
         """بدء مستقبِل واتساب — الرسائل الواردة تدخل نفس الـ buffer الذي يفرّغه
-        collect_all()، تماماً مثل البريد و ERP."""
+        collect_all()، تماماً مثل البريد و ERP. يُعيد True عند النجاح فقط —
+        مستقبِل لا يستمع لا يبقى مكانه أبداً، حتى تنجح إعادة المحاولة لاحقاً
+        (مثلاً بعد تحرّر المنفذ)."""
+        self.stop_whatsapp()
+        recv = WhatsAppReceiver(port, self._append, self._wa_dept,
+                                self._log_fn, token=self.wa_token,
+                                on_event=self._event_fn)
+        if not recv.start():
+            self.whatsapp = None       # لا يبقى مستقبِل لا يستمع في مكانه
+            return False
+        self.whatsapp = recv
+        return True
+
+    def stop_whatsapp(self):
         if self.whatsapp:
-            self.whatsapp.stop()
-        self.whatsapp = WhatsAppReceiver(port, self._append, self._wa_dept,
-                                         self._log_fn, token=self.wa_token)
-        self.whatsapp.start()
+            try:
+                self.whatsapp.stop()
+            except Exception:
+                pass
+            self.whatsapp = None
 
     def _append(self, reports: list):
         with self._lock:
@@ -737,6 +970,16 @@ class ConnectorHub:
             self._log_fn(f"✓ إجمالي التقارير المُجمَّعة: {len(all_reports)}")
         return all_reports
 
+    def take_buffer(self) -> list:
+        """Drain pending reports so a hub rebuild does not discard them."""
+        with self._lock:
+            pending, self._buffer = list(self._buffer), []
+        return pending
+
+    def extend_buffer(self, reports: list) -> None:
+        with self._lock:
+            self._buffer.extend(reports)
+
     def stop_all(self):
         targets = [("البريد", self.email), ("ERP", self.erp)]
         if self.whatsapp:
@@ -746,7 +989,7 @@ class ConnectorHub:
                 conn.stop()
             except Exception as e:
                 log.warning(f"فشل إيقاف {name}: {e}")
-                self._log_fn(f"فشل إيقاف {name}: {e}")
+                self._log_fn(f"فشل إيقاف {name}: {friendly_fs_error(e)}")
 
     def test_email(self) -> tuple:
         return self.email.test_connection()
@@ -758,34 +1001,47 @@ class ConnectorHub:
 # ════════════════════════════════════════════════════
 # بناء HTML للتقرير المُرسَل بالبريد
 # ════════════════════════════════════════════════════
+def _h(value) -> str:
+    """Escape a value for HTML interpolation.
+
+    Report content is model output derived from field reports that arrive from
+    WhatsApp groups, inbound email and watched folders — i.e. from outside the
+    trust boundary. The PDF exporter escapes; this path must too."""
+    return _html.escape("" if value is None else str(value), quote=True)
+
+
+_HTML_TIER = {"good": "#10b981", "warn": "#f59e0b",
+              "bad": "#ef4444", "neutral": "#64748b"}
+
+
 def build_report_html(results: dict) -> str:
-    chief  = results.get("chief", {})
+    chief  = _obj((results or {}).get("chief"))
     health = chief.get("overall_health", "غير محدد")
-    color  = "#10b981" if health == "جيد" else \
-             "#f59e0b" if health == "متوسط" else "#ef4444"
+    color  = _HTML_TIER[tier(health)]
     date   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     actions_rows = ""
-    for act in chief.get("top_actions", [])[:5]:
+    for act in _rows(chief.get("top_actions"))[:5]:
+        act = _obj(act)
         actions_rows += f"""
         <tr>
           <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;
-                     font-weight:bold;">{act.get('priority','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('action','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('owner','')}</td>
-          <td style="padding:8px;border:1px solid #e2e8f0;">{act.get('deadline','')}</td>
+                     font-weight:bold;">{_h(act.get('priority',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('action',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('owner',''))}</td>
+          <td style="padding:8px;border:1px solid #e2e8f0;">{_h(act.get('deadline',''))}</td>
         </tr>"""
 
     kpi_cards = ""
-    for kpi in chief.get("kpis", [])[:6]:
-        sc = "#10b981" if kpi.get("status") == "جيد" else \
-             "#f59e0b" if kpi.get("status") == "تحذير" else "#ef4444"
+    for kpi in _rows(chief.get("kpis"))[:6]:
+        kpi = _obj(kpi)
+        sc = _HTML_TIER[tier(kpi.get("status"))]
         kpi_cards += f"""
         <div style="background:#f8fafc;border:1px solid {sc};border-radius:8px;
                     padding:12px;text-align:center;min-width:100px;">
-          <div style="font-size:20px;font-weight:bold;color:{sc};">{kpi.get('value','')}</div>
-          <div style="font-size:11px;color:#64748b;">{kpi.get('name','')}</div>
-          <div style="font-size:14px;">{kpi.get('trend','→')}</div>
+          <div style="font-size:20px;font-weight:bold;color:{sc};">{_h(kpi.get('value',''))}</div>
+          <div style="font-size:11px;color:#64748b;">{_h(kpi.get('name',''))}</div>
+          <div style="font-size:14px;">{_h(kpi.get('trend','→'))}</div>
         </div>"""
 
     return f"""
@@ -803,7 +1059,7 @@ def build_report_html(results: dict) -> str:
         <div style="background:{color}20;border:2px solid {color};border-radius:10px;
                     padding:14px;text-align:center;margin:16px 0;">
           <span style="font-size:18px;font-weight:bold;color:{color};">
-            الحالة العامة: {health}
+            الحالة العامة: {_h(health)}
           </span>
         </div>
 
@@ -814,7 +1070,7 @@ def build_report_html(results: dict) -> str:
 
         <h2 style="color:#1e3a5f;font-size:15px;">الملخص التنفيذي</h2>
         <p style="line-height:1.8;color:#334155;font-size:13px;">
-          {chief.get('executive_summary', '')}
+          {_h(chief.get('executive_summary', ''))}
         </p>
 
         <h2 style="color:#1e3a5f;font-size:15px;">خطة العمل الفورية</h2>

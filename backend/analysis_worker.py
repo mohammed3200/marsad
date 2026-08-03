@@ -4,7 +4,15 @@ Lives on a QThread. Wraps AgentsEngine.run_all and re-emits its per-agent /
 progress / log callbacks as Qt signals so the UI updates only via the main
 thread's event loop. The worker never touches QML objects directly.
 """
-from PySide6.QtCore import QObject, Signal, Slot
+import logging
+
+from PySide6.QtCore import QObject, Signal, Slot, QThread
+
+from core.errors import friendly_error
+
+# NB: the class below declares a `log` Signal — name the module logger
+# something else so it isn't shadowed on the instance.
+_log = logging.getLogger(__name__)
 
 
 class AnalysisWorker(QObject):
@@ -27,7 +35,9 @@ class AnalysisWorker(QObject):
                 self._reports,
                 progress_cb=lambda p: self.progress.emit(int(p)),
                 agent_cb=lambda aid, state: self.agentState.emit(aid, state),
+                should_stop=lambda: QThread.currentThread().isInterruptionRequested(),
             )
             self.finished.emit(results)
         except Exception as e:  # noqa: BLE001 — surface any failure to the UI
-            self.failed.emit(str(e))
+            _log.warning("analysis worker failed: %s", e, exc_info=True)
+            self.failed.emit(friendly_error(str(e)))

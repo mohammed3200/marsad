@@ -53,15 +53,6 @@ _FS = {
     "caption": 11,   # captions / meta
 }
 
-# fixed Arabic status literals -> semantic color key
-_STATUS = {
-    "جيد": "green", "متوسط": "amber", "حرج": "red",
-    "تحذير": "amber",
-    "آمن": "green", "خطر": "red",
-    "عالية": "red", "متوسطة": "amber", "منخفضة": "green",
-    "مكتمل": "green", "متأخر": "red", "في الموعد": "info",
-}
-
 
 class Theme(QObject):
     @Property("QVariantMap", constant=True)
@@ -78,4 +69,6 @@ class Theme(QObject):
 
     @Slot(str, result=str)
     def statusColor(self, literal):
-        return _COLORS.get(_STATUS.get(literal, ""), _COLORS["ink2"])
+        from core.status import tier
+        return {"good": _COLORS["green"], "warn": _COLORS["amber"],
+                "bad": _COLORS["red"], "neutral": _COLORS["ink2"]}[tier(literal)]

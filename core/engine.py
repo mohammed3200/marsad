@@ -7,9 +7,11 @@ live agent state). The `results` dict keyed by agent id is the contract every
 consumer (exporters, dashboard) reads.
 """
 import json
+import os
 import datetime
 
 from .paths import DATA_DIR
+from .errors import friendly_error, friendly_fs_error
 
 BASE_DIR = DATA_DIR
 REPORTS  = DATA_DIR / "reports"
@@ -37,7 +39,7 @@ class AIEngine:
     def _bad_scheme(url: str) -> dict | None:
         """يرفض أي مخطط غير http/https قبل الطلب — يُعيد {"error":…} عند الرفض وNone عند القبول."""
         if not url.lower().startswith(("http://", "https://")):
-            return {"error": f"رابط غير مدعوم (http/https فقط): {url}"}
+            return {"error": f"رابط غير مدعوم (http/https فقط): {url}", "status": None}
         return None
 
     @staticmethod
@@ -58,11 +60,91 @@ class AIEngine:
                 body = e.read().decode("utf-8", "ignore")[:300]
             except Exception:
                 body = ""
-            return {"error": f"HTTP {e.code}: {body or e.reason}"}
+            # جسم الرد الخام (JSON إنجليزي) لا يصل الواجهة — رسالة عربية موجزة
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
         except urllib.error.URLError as e:
-            return {"error": f"تعذّر الاتصال: {e.reason}"}
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+            # السبب الخام (gaierror/Errno…) يمرّ عبر المترجم — لا يصل الواجهة خاماً
+            return {"error": friendly_error(str(e.reason)), "status": None}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": friendly_error(str(e)), "status": None}
+
+    @staticmethod
+    def _http_get_json(url: str, headers: dict, timeout: int) -> dict:
+        """GET JSON، أعِد رداً مُفكَّكاً أو {"error":…}. لا يرفع استثناء أبداً."""
+        import urllib.request, urllib.error
+        bad = AIEngine._bad_scheme(url)
+        if bad is not None:
+            return bad
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return {"_ok": json.loads(resp.read())}
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                body = ""
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+            return {"error": friendly_error(str(e.reason)), "status": None}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+        except Exception as e:
+            return {"error": friendly_error(str(e)), "status": None}
+
+    def list_models(self) -> tuple:
+        """قائمة النماذج المتاحة من المزوّد المُختار — (ok, models | رسالة)."""
+        backend = self.settings.get("ai_backend", "ollama")
+        if backend == "ollama":
+            url = (self.settings.get("ollama_url")
+                   or "http://localhost:11434").rstrip("/")
+            res = self._http_get_json(f"{url}/api/tags", {}, 10)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(m.get("name", "")
+                            for m in res["_ok"].get("models", []))
+            models = [m for m in models if m]
+            return (True, models) if models else (
+                False, "لا توجد نماذج — نزّل نموذجاً أولاً (ollama pull)")
+        if backend == "openai":
+            api_key = self.settings.get("openai_api_key", "")
+            if not api_key:
+                return False, "لم يُضبَط مفتاح OpenAI في الإعدادات"
+            base = (self.settings.get("openai_base_url")
+                    or "https://api.openai.com/v1").rstrip("/")
+            res = self._http_get_json(f"{base}/models",
+                                      {"Authorization": f"Bearer {api_key}"}, 15)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(m.get("id", "") for m in res["_ok"].get("data", []))
+            models = [m for m in models if m]
+            return (True, models) if models else (False, "رد غير متوقع من الخدمة")
+        if backend == "gemini":
+            api_key = self.settings.get("gemini_api_key", "")
+            if not api_key:
+                return False, "لم يُضبَط مفتاح Gemini في الإعدادات"
+            res = self._http_get_json(
+                "https://generativelanguage.googleapis.com/v1beta/models"
+                f"?key={api_key}", {}, 15)
+            if "error" in res:
+                return False, res["error"]
+            models = sorted(
+                m.get("name", "").replace("models/", "")
+                for m in res["_ok"].get("models", [])
+                if "generateContent" in (m.get("supportedGenerationMethods") or []))
+            models = [m for m in models if m]
+            return (True, models) if models else (False, "رد غير متوقع من الخدمة")
+        if backend == "claude":
+            # لا توجد واجهة قائمة — قائمة ثابتة من الإصدارات المعروفة
+            return True, ["claude-opus-4-5", "claude-sonnet-4-5",
+                          "claude-haiku-4-5"]
+        return False, "أدخل اسم النشر (Deployment) يدوياً"
 
     def _timeout(self) -> int:
         try:
@@ -71,21 +153,65 @@ class AIEngine:
             return 180
 
     @staticmethod
+    def _first_json_object(text: str):
+        """First balanced {...} span, ignoring braces inside string literals."""
+        depth = 0
+        start = -1
+        in_str = False
+        escaped = False
+        for i, ch in enumerate(text):
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}" and depth:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    return text[start:i + 1]
+        return None
+
+    @staticmethod
     def _parse_json(raw: str) -> dict:
         """استخراج JSON من رد النموذج — يزيل أسوار ```json ثم يجرّب استخراج {}.
-        يُعيد {"raw":…, "error":"json_parse"} إذا تعذّر."""
+
+        يجب أن تكون النتيجة قاموساً؛ أي رد آخر (قائمة أو قيمة مفردة) يُعامَل
+        كخطأ تحليل حتى لا ينهار المُصدِّر أو خط التحليل لاحقاً.
+        يُعيد {"raw":…, "error":"json_parse"} إذا تعذّر.
+        """
         clean = raw.replace("```json", "").replace("```", "").strip()
+
+        # First try to parse the clean text as-is
         try:
-            return json.loads(clean)
-        except json.JSONDecodeError:
-            start = clean.find("{")
-            end   = clean.rfind("}") + 1
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(clean[start:end])
-                except json.JSONDecodeError:
-                    pass
+            parsed = json.loads(clean)
+            if isinstance(parsed, dict):
+                return parsed
+            # If it parses but isn't a dict, it's an error
+            # (don't silently extract from arrays/scalars)
             return {"raw": raw, "error": "json_parse"}
+        except json.JSONDecodeError:
+            pass
+
+        # Only if full parse failed, try to extract the first object
+        candidate = AIEngine._first_json_object(clean)
+        if candidate:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        return {"raw": raw, "error": "json_parse"}
 
     def _ask_ollama(self, system_prompt: str, user_text: str) -> dict:
         import urllib.request, urllib.error
@@ -111,15 +237,19 @@ class AIEngine:
                 data = json.loads(resp.read())
                 return self._parse_json(data.get("response", ""))
         except urllib.error.URLError as e:
-            return {"error": f"تعذر الاتصال بـ Ollama: {e.reason}\nتأكد من تشغيل Ollama أولاً"}
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
+            return {"error": f"تعذر الاتصال بـ Ollama: {friendly_error(str(e.reason))}\nتأكد من تشغيل Ollama أولاً"}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال بـ Ollama — النموذج لا يستجيب (قد يكون قيد التحميل)"}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": friendly_error(str(e))}
 
     def _ask_claude(self, system_prompt: str, user_text: str) -> dict:
         api_key = self.settings.get("claude_api_key", "")
         if not api_key:
             return {"error": "لم يُضبَط مفتاح Claude API في الإعدادات"}
-        import urllib.request
+        import urllib.request, urllib.error
         payload = json.dumps({
             "model"     : self.settings.get("claude_model", "claude-opus-4-5"),
             "max_tokens": 4096,
@@ -140,8 +270,24 @@ class AIEngine:
             with urllib.request.urlopen(req, timeout=self._timeout()) as resp:
                 data = json.loads(resp.read())
                 return self._parse_json(data["content"][0]["text"])
+        # Mirrors _http_json/_http_get_json: HTTPError first (401/429/5xx carry the
+        # response *body*, never the outgoing request — the x-api-key header above is
+        # never read back or echoed), then URLError/TimeoutError, then a generic
+        # catch-all — all through friendly_error so nothing raw reaches the UI.
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                body = ""
+            return {"error": friendly_error(f"HTTP {e.code}: {body or e.reason}"), "status": e.code}
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError) or "timed out" in str(e.reason):
+                return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
+            return {"error": friendly_error(str(e.reason)), "status": None}
+        except TimeoutError:
+            return {"error": "انتهت مهلة الاتصال — الخادم لا يستجيب", "status": None}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": friendly_error(str(e))}
 
     def _openai_chat(self, base_url: str, api_key: str, model: str,
                      headers: dict, system_prompt: str, user_text: str) -> dict:
@@ -159,7 +305,7 @@ class AIEngine:
         res = self._http_json(base_url, payload, headers, self._timeout())
         if "error" in res:
             # بعض الواجهات المتوافقة (مثل LM Studio) ترفض response_format بـ HTTP 400 — أعِد المحاولة بدونه
-            if res["error"].startswith("HTTP 400"):
+            if res.get("status") == 400 and "response_format" in payload:
                 payload.pop("response_format", None)
                 res = self._http_json(base_url, payload, headers, self._timeout())
             if "error" in res:
@@ -167,7 +313,7 @@ class AIEngine:
         try:
             return self._parse_json(res["_ok"]["choices"][0]["message"]["content"])
         except Exception as e:
-            return {"error": f"رد غير متوقع: {e}"}
+            return {"error": f"رد غير متوقع: {friendly_error(str(e))}"}
 
     def _ask_openai(self, system_prompt: str, user_text: str) -> dict:
         api_key = self.settings.get("openai_api_key", "")
@@ -208,14 +354,14 @@ class AIEngine:
         try:
             return self._parse_json(res["_ok"]["candidates"][0]["content"]["parts"][0]["text"])
         except Exception as e:
-            return {"error": f"رد غير متوقع: {e}"}
+            return {"error": f"رد غير متوقع: {friendly_error(str(e))}"}
 
     def test_connection(self) -> tuple:
         """اختبار الاتصال بالمحرّك المُختار (يعمل لكل المزوّدين عبر ask())."""
-        result = self.ask(
+        result = _as_result(self.ask(
             "أجب بـ JSON فقط.",
             'أجب بالتالي حرفياً: {"status":"ok","message":"الاتصال ناجح"}'
-        )
+        ))
         if "error" in result:
             return False, result["error"]
         return True, result.get("message", "الاتصال ناجح")
@@ -293,6 +439,13 @@ def _ensure_chief_schema(chief: dict) -> dict:
     }
 
 
+def _as_result(value) -> dict:
+    """Any agent result that is not a dict is a failed agent, not a crash."""
+    if isinstance(value, dict):
+        return value
+    return {"raw": repr(value), "error": "bad_shape"}
+
+
 class AgentsEngine:
     def __init__(self, ai: AIEngine, log_fn=None):
         self.ai  = ai
@@ -307,21 +460,30 @@ class AgentsEngine:
         )
         return self.ai.ask(system, reports_text)
 
-    def run_all(self, reports: list, progress_cb=None, agent_cb=None) -> dict:
+    def run_all(self, reports: list, progress_cb=None, agent_cb=None,
+                should_stop=None) -> dict:
         """تشغيل جميع الوكلاء وإرجاع النتائج.
 
         agent_cb(agent_id, state) — state ∈ {"running","done","error"} — يُستدعى
         قبل/بعد كل وكيل حتى تعرض الواجهة الحالة الحيّة لكل وكيل.
+
+        should_stop — استدعاء اختياري بلا معطيات، يُفحص بين كل وكيل والتالي
+        وقبل استدعاء وكيل التنسيق. إن أعاد True يتوقف التحليل فوراً دون رفع
+        استثناء ودون حفظ نتائج جزئية، ويُعاد ما اكتمل من نتائج الوكلاء حتى تلك
+        اللحظة. إلغاء تعاوني — يُستخدم عند إغلاق النافذة أثناء تحليل جارٍ.
         """
         text = self._format_reports(reports)
         results = {}
         total   = len(WORKER_AGENTS) + 1
 
         for i, ag_id in enumerate(WORKER_AGENTS):
+            if should_stop and should_stop():
+                self.log("⏹ أُوقف التحليل")
+                return results
             self.log(f"⏳ {ag_id}...")
             if agent_cb:
                 agent_cb(ag_id, "running")
-            result = self.run_agent(ag_id, text)
+            result = _as_result(self.run_agent(ag_id, text))
             results[ag_id] = result
             if "error" in result:
                 self.log(f"  ✗ {result['error']}")
@@ -333,6 +495,10 @@ class AgentsEngine:
                     agent_cb(ag_id, "done")
             if progress_cb:
                 progress_cb(int((i+1)/total*100))
+
+        if should_stop and should_stop():
+            self.log("⏹ أُوقف التحليل")
+            return results
 
         # وكيل التنسيق — يُغذّى فقط بنتائج الوكلاء الناجحة (لا نمرّر أخطاء)
         self.log("⏳ وكيل التنسيق المركزي...")
@@ -348,7 +514,7 @@ class AgentsEngine:
             f"{desc}\n"
             f"أجب بـ JSON فقط بهذا الهيكل:\n{schema}"
         )
-        chief = self.ai.ask(system, chief_input)
+        chief = _as_result(self.ai.ask(system, chief_input))
         chief_ok = "error" not in chief and "raw" not in chief
         results["chief"] = _ensure_chief_schema(chief)
         if agent_cb:
@@ -372,10 +538,41 @@ class AgentsEngine:
         return "\n\n---\n\n".join(parts)
 
     def _save(self, results: dict):
-        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = REPORTS / f"results_{ts}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        latest = REPORTS / "latest.json"
-        with open(latest, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        """Persisting must never destroy a completed analysis.
+
+        Broad `except Exception` on purpose: json.dump() itself can raise
+        (e.g. UnicodeEncodeError on an unpaired surrogate an LLM emitted near
+        a truncation boundary — a ValueError, not an OSError), and any such
+        failure here must be logged, not left to escape run_all() and discard
+        a completed 11-agent run.
+        """
+        try:
+            REPORTS.mkdir(parents=True, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            self._write_json(REPORTS / f"results_{ts}.json", results)
+            self._write_json(REPORTS / "latest.json", results)
+        except Exception as e:
+            self.log(f"تعذّر حفظ النتائج: {friendly_fs_error(e)}")
+
+    @staticmethod
+    def _write_json(path, payload):
+        """Atomic write — a torn latest.json silently empties the dashboard.
+
+        On any failure the partial `.tmp` file is removed rather than left
+        behind — an orphan per failed run would otherwise accumulate in the
+        folder the user opens via openReportsFolder, and on a full disk it
+        keeps the space consumed.
+        """
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise

@@ -16,7 +16,7 @@ Item {
         width: Math.max(0, Math.min(parent.width - 48, 440))
         spacing: 9
         Glyph {
-            shape: "outline"
+            shape: "square"
             Layout.alignment: Qt.AlignHCenter
             width: 40; height: 40
             color: Theme.colors.ink3

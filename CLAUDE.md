@@ -8,8 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 construction/telecom project management (LTT 4G/5G rollout). It ingests field reports from multiple
 sources, runs them through a fleet of LLM "agents," and produces an executive dashboard plus branded
 PDF/Excel/HTML reports. UI text, agent prompts, and output JSON keys/values are all in Arabic —
-**preserve Arabic strings verbatim when editing**. Qt shapes/orders Arabic natively (HarfBuzz + BiDi),
-so no reshaper/bidi libraries are used.
+**preserve Arabic strings verbatim when editing**. Qt shapes/orders Arabic natively (HarfBuzz + BiDi) for the on-screen UI, so the
+QML layer needs no reshaper. The **PDF exporter does**: reportlab shapes
+nothing on its own, so `core/exporters.py` uses `arabic-reshaper` +
+`python-bidi`. Both are required dependencies — do not remove them.
 
 Design language: **Light Executive Report** — white paper, near-black ink, one deep teal-green accent
 (`#0E6E60`), no cards, structure by hairline rules, right-hand RTL sidebar nav. Colour is rationed:
@@ -27,7 +29,15 @@ Requires an LLM backend — `ai_backend` in `settings.json` picks one of five: *
 `ollama_url`/`ollama_model`), **claude** (`claude_api_key`/`claude_model`), **openai**
 (`openai_api_key`/`openai_base_url`/`openai_model` — OpenAI-compatible: OpenRouter/Groq/Together/
 DeepSeek/LM Studio), **gemini** (`gemini_api_key`/`gemini_model`), **azure** (`azure_endpoint`/
-`azure_api_key`/`azure_deployment`/`azure_api_version`). No test suite/linter.
+`azure_api_key`/`azure_deployment`/`azure_api_version`).
+
+Tests: `python3 -m unittest discover -s tests -v` (112, stdlib unittest) and
+`python3 tools/test_api.py` (7). Every test runs inside
+`tests/_isolation.py::isolated_state()` so the suite never touches the real
+`settings.json`, `reports/` or `data/`. No linter.
+
+`api/` is a Qt-free FastAPI mirror of `AppController`, **not shipped this release** — it
+raises on import unless `MARSAD_API_ENABLE=1` is set.
 
 ## Architecture
 
@@ -135,3 +145,13 @@ portable `.exe` and the Linux `.deb` on a `v*` tag and attaches them to the rele
 **Frozen paths:** `core/paths.py` splits `BUNDLE_DIR` (read-only bundled assets) from `DATA_DIR`
 (writable per-user state — `%APPDATA%/marsad`, `~/.local/share/marsad`). All state (settings, reports,
 contacts, logs) uses `DATA_DIR`; never write next to the executable.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

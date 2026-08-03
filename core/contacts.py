@@ -6,6 +6,7 @@ widgets). `export_to_config()` produces the email→dept / whatsapp→dept maps 
 connectors use for routing.
 """
 import json
+import os
 
 from .paths import DATA_DIR
 
@@ -78,10 +79,28 @@ class ContactsDB:
         return data
 
     def _save_data(self, data=None):
+        """Atomic write — matching core/engine.py's _write_json and
+        backend/settings_bridge.py's save_settings(). Without this, a
+        write interrupted partway through (disk full, process killed)
+        leaves contacts.json truncated/corrupt, and every add/update/
+        delete_employee call above goes straight through this, unguarded,
+        from a @Slot — the last non-atomic write of authoritative user
+        data in the app."""
         if data is None:
             data = self.data
-        with open(CONTACTS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp = CONTACTS_FILE.with_suffix(CONTACTS_FILE.suffix + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, CONTACTS_FILE)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def save(self):
         self._save_data()

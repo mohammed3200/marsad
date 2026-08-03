@@ -7,12 +7,13 @@ Qt Quick / QML front-end (PySide6) over the UI-agnostic core (AI agents,
 connectors, exporters, contacts). Run:  python app.py
 """
 import sys
+import signal
 from pathlib import Path
 
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 from PySide6.QtQuick import QQuickView
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 
 from backend.theme import Theme
 from backend.controller import AppController
@@ -55,6 +56,18 @@ def main():
         return 1
 
     view.show()
+
+    app.aboutToQuit.connect(controller.shutdown)
+
+    # Ctrl+C: quit the event loop cleanly instead of dying mid-metacall
+    # (an interrupt inside a property setter tears the controller down while
+    # QML bindings are still evaluating — the "of null" cascade).
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    # keep the interpreter ticking so the SIGINT handler runs promptly
+    sigint_poller = QTimer()
+    sigint_poller.timeout.connect(lambda: None)
+    sigint_poller.start(250)
+
     return app.exec()
 
 

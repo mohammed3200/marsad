@@ -230,10 +230,11 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.topMargin: 13; Layout.bottomMargin: 13
                                     spacing: 13
-                                    // Arabic-Indic order numeral
+                                    // Arabic-Indic order numeral — body font: Kufi's
+                                    // digits are short by design and read weak here
                                     Text {
                                         text: page.arabicNumeral(index + 1)
-                                        font.family: Theme.fonts.display; font.pixelSize: Theme.fs.section; font.bold: true
+                                        font.family: Theme.fonts.body; font.pixelSize: Theme.fs.title; font.bold: true
                                         color: Theme.colors.accent
                                         Layout.alignment: Qt.AlignTop
                                         Layout.topMargin: 1
@@ -245,13 +246,16 @@ Item {
                                             text: modelData.action ? modelData.action : ""
                                             Layout.fillWidth: true
                                             wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignRight
+                                            // no explicit horizontalAlignment: Arabic content's
+                                            // own implicit RTL direction already right-aligns it;
+                                            // an explicit AlignRight here gets double-mirrored by
+                                            // the app-wide LayoutMirroring and lands on the left
+                                            // (see 88ca9e6), stranding it away from the numeral.
                                             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                             color: Theme.colors.ink
                                         }
                                         Text {
                                             Layout.fillWidth: true
-                                            horizontalAlignment: Text.AlignRight
                                             text: {
                                                 var parts = []
                                                 if (modelData.owner) parts.push(modelData.owner)

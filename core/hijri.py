@@ -45,6 +45,11 @@ def hijri_label(date: datetime.date = None) -> str:
 
 
 def dual_label(date: datetime.date = None) -> str:
-    """«٥ صفر ١٤٤٨ هـ · 2026-07-21» — هجري + ميلادي."""
+    """«٥ صفر ١٤٤٨ هـ، 2026-07-21» — هجري + ميلادي.
+
+    Separator is the Arabic comma (U+060C) rather than «·»: Qt falls back to a
+    different bundled font per glyph for punctuation the active family lacks,
+    and «·» is one of them. U+060C is present in every bundled Arabic family,
+    so the permanently-visible sidebar date no longer mixes typefaces."""
     date = date or datetime.date.today()
-    return f"{hijri_label(date)} · {date.isoformat()}"
+    return f"{hijri_label(date)}، {date.isoformat()}"
