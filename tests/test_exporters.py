@@ -88,6 +88,18 @@ class MalformedStatusShapeTests(unittest.TestCase):
                 self.assertGreater(os.path.getsize(out), 3000)
         build_report_html(res)   # must not raise
 
+    def test_list_wrapped_executive_summary(self):
+        # Same class as the three above, one field further out: A7 is written
+        # raw, so a model that returns the summary as a list of bullets makes
+        # openpyxl raise and Excel export silently unavailable for that run.
+        res = hostile_results()
+        res["chief"]["executive_summary"] = ["بند أول", "بند ثانٍ"]
+        for fn, ext in ((export_pdf, ".pdf"), (export_excel, ".xlsx")):
+            with self.subTest(ext=ext):
+                out = fn(res, os.path.join(tempfile.mkdtemp(), "summary" + ext))
+                self.assertGreater(os.path.getsize(out), 3000)
+        build_report_html(res)   # must not raise
+
     def test_list_wrapped_risk_level(self):
         res = hostile_results()
         res["risk"] = {"risks": [{"title": "خطر", "level": ["عالية"],

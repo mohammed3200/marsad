@@ -376,7 +376,7 @@ def export_excel(results: dict, output_path: str) -> str:
     ws1.merge_cells("A6:G6"); hdr(ws1["A6"],ACC,WHITE,True,12)
     ws1["A6"].value = "الملخص التنفيذي"
     ws1.merge_cells("A7:G9"); body(ws1["A7"],bg=GRAY)
-    ws1["A7"].value = chief.get("executive_summary","")
+    ws1["A7"].value = _cell(chief.get("executive_summary",""))
     ws1["A7"].alignment = Alignment(horizontal="right",vertical="top",wrap_text=True)
     ws1.row_dimensions[7].height=70
 

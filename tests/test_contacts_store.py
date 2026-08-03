@@ -33,16 +33,21 @@ class ContactsAtomicWriteTests(unittest.TestCase):
                         if p.name.endswith(".tmp")]
         self.assertEqual(leftovers, [])
 
-    def test_save_round_trips_through_a_temp_file_and_replace(self):
+    def test_add_employee_reaches_disk_leaving_no_temp_sibling(self):
         import core.contacts as contacts
 
         with isolated_state():
             db = contacts.ContactsDB()
             emp_id = db.add_employee({"name": "منى", "dept": "quality"})
             on_disk = json.loads(contacts.CONTACTS_FILE.read_text(encoding="utf-8"))
+            # The atomic write goes through a `.tmp` sibling; os.replace must
+            # have consumed it. A leftover means the rename never happened and
+            # the visible file is whatever a previous run left there.
+            leftovers = list(contacts.CONTACTS_FILE.parent.glob("*.tmp"))
         names = [e["name"] for e in on_disk["employees"]]
         self.assertIn("منى", names)
         self.assertTrue(emp_id)
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

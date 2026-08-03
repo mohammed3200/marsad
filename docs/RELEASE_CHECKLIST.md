@@ -45,6 +45,9 @@ defects are known and deferred with it:
   is no busy gate on `PUT /api/settings`, so a settings change during a run switches
   the provider mid-analysis. The desktop side fixed this; the API side did not.
 - Its `_rebuild_hub` drops buffered WhatsApp reports rather than handing them over.
+- `sync_contacts` calls `_rebuild_hub()` with no busy gate, so syncing contacts
+  during a run swaps the connectors under it. The desktop's `syncContacts` gained
+  that gate; the API mirror did not.
 - Upload size and count caps are enforced *after* Starlette has already buffered and
   spooled the whole request, so they bound the copy written to `uploads/`, not the
   disk and bandwidth consumed receiving it.
@@ -71,6 +74,11 @@ defects are known and deferred with it:
   linger for that period. If that wait expires the process can still hit the original
   `QThread: Destroyed while thread is still running` abort — reduced from certain to
   near-zero, not eliminated.
+- `_run_fetch_models` and `_run_bridge_start` emit `notify`/`logMessage` unguarded in
+  their bodies (only their `finally` blocks got the shutdown guard). Closing the window
+  while a model list or WhatsApp bridge start is in flight can raise `RuntimeError` on
+  the daemon thread. It reaches `threading.excepthook`, not the user, and cannot corrupt
+  state — but it prints a traceback on exit.
 - Department creation and employee editing are not available in the Contacts UI; the
   seeded default org structure is what ships.
 - Filename-based department routing is best-effort. `5Gcore_report.csv` does not route
