@@ -424,6 +424,18 @@ class AppController(QObject):
         self._set_busy(False)
         self.dashModelChanged.emit()
         self.reportDateChanged.emit()
+        # Derive the verdict from the results dict we already hold — no new
+        # signal, and nothing Qt-shaped pushed down into core/. Only the worker
+        # agents are counted: _ensure_chief_schema strips the chief's own
+        # "error" key, and a chief fed by zero successful workers is worthless
+        # anyway. An empty `workers` means a cancelled run, not a failed one.
+        workers = [v for k, v in self._results.items()
+                   if k != "chief" and isinstance(v, dict)]
+        if workers and not any("error" not in v for v in workers):
+            msg = "لم ينجح أي وكيل — راجع إعدادات المحرّك وسجلّ التشغيل"
+            self.analysisFailed.emit(msg)
+            self.notify.emit(f"تعذّر إكمال التحليل: {msg}")
+            return
         self.analysisDone.emit()
         self.notify.emit("اكتمل التحليل — عُرضت النتائج في لوحة التحكم")
 

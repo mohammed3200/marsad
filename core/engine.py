@@ -521,7 +521,19 @@ class AgentsEngine:
             agent_cb("chief", "done" if chief_ok else "error")
         if progress_cb:
             progress_cb(100)
-        self.log("✓ اكتمل التحليل الشامل")
+        # The run finished, so progress is 100 — but "finished" is not "succeeded".
+        # `clean` above is already the set of workers that came back without an
+        # error, so the verdict costs nothing extra. Reporting ✓ unconditionally
+        # told a user whose every agent had just timed out that the analysis was
+        # complete, while the dashboard right next to it said «غير محدد».
+        workers_ok = len(clean)
+        workers_total = len(WORKER_AGENTS)
+        if workers_ok == 0 and not chief_ok:
+            self.log("✗ تعذّر إكمال التحليل — لم ينجح أي وكيل")
+        elif workers_ok < workers_total or not chief_ok:
+            self.log(f"✓ اكتمل التحليل الشامل — نجح {workers_ok} من {workers_total}")
+        else:
+            self.log("✓ اكتمل التحليل الشامل")
         self._save(results)
         return results
 
