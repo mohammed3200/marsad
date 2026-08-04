@@ -28,7 +28,9 @@ Hard context facts that shape everything else:
 
 - **Arabic-first.** UI copy, agent prompts, and output JSON keys/values are Arabic and are
   part of the product contract. The app relies on the platform's native Arabic shaping
-  (HarfBuzz/BiDi in Qt; the browser's own shaping on web) — no reshaper/bidi libraries.
+  (HarfBuzz/BiDi in Qt; the browser's own shaping on web) — no reshaper/bidi libraries
+  on screen. The PDF exporter is the exception: reportlab shapes nothing itself, so
+  `core/exporters.py` requires `arabic-reshaper` + `python-bidi`.
 - **Local-first.** Everything runs on one machine: the LLM can be a local Ollama server
   (the default) or a cloud API key; the WhatsApp receiver and web API bind to `127.0.0.1`.
 - **Single-user desktop app** that grew a headless API. There is no auth, no multi-tenancy,
@@ -450,7 +452,10 @@ only blank templates ship in git.
 ## 9. Security model
 
 - **Loopback only**: the WhatsApp receiver and the FastAPI server bind `127.0.0.1` —
-  nothing is exposed to the LAN.
+  nothing is exposed to the LAN. That covers *inbound* only. Outbound, the app reaches
+  the configured LLM provider, the configured mail server, and — once the user starts the
+  WhatsApp bridge — WhatsApp's own servers, since the bridge is a Baileys WhatsApp Web
+  client. See README's Data & privacy section.
 - **WhatsApp token**: per-install `whatsapp_token` (`secrets.token_hex(16)`), required as
   the `X-WA-Token` header on all three receiver paths; injected into the generated bridge.
 - **Credential hygiene**: `settings.json` (API keys, email app password, WA token),

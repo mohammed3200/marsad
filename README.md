@@ -200,9 +200,20 @@ entered in the app sync their email/WhatsApp → department routing back into `s
   `wa_session/` holding your live WhatsApp login. Both live under the per-user data dir
   (`%APPDATA%/marsad`, `~/.local/share/marsad`; the repo folder when run from source), are
   gitignored, and stay until you delete them — delete both to revoke the linked device.
+
+  **The bridge talks to Meta.** It is a Baileys WhatsApp Web client: starting it opens an outbound
+  connection to WhatsApp's servers (handshake, credential sync, keepalive, reconnect) and downloads
+  message media from WhatsApp's CDN. "Receive-only" describes the *messages* — marsad never sends
+  one — not the socket, which is necessarily two-way. The first start also runs `npm install`,
+  fetching the bridge's dependencies from the npm registry. The receiver marsad itself runs stays on
+  `127.0.0.1` and still requires the `X-WA-Token` header.
 - **Reports & logs** — analysis results (`reports/`) and connector/engine logs (`logs/`) accumulate
-  locally until you delete them; nothing leaves the machine except calls to your configured LLM
-  provider and email server.
+  locally until you delete them.
+
+**What leaves the machine:** calls to your configured LLM provider (none, if you run Ollama
+locally), your email server if email is configured, and — only once you start the WhatsApp bridge —
+WhatsApp's servers and the npm registry, as described above. WhatsApp is off by default
+(`whatsapp_enabled: false`) and nothing reaches Meta until you start the bridge yourself.
 
 ## Project layout
 
