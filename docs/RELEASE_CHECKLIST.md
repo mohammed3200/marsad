@@ -5,7 +5,7 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 177 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 185 tests, all pass
 - [ ] `python3 tools/test_api.py` — 7 tests, all pass
 - [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`. Open `2-dashboard.png`: no toast across the bottom, and the lower half populated. `reports/latest.json` must be byte-identical afterwards — the harness seeds its demo result in memory only.
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
