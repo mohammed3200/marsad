@@ -120,19 +120,29 @@ Item {
                                     verticalCenter: parent.verticalCenter
                                 }
                                 spacing: 10
+                                // Glyph declared FIRST. This RowLayout inherits
+                                // mirroring, so the first child takes the right —
+                                // the leading edge in RTL — and the icon sits
+                                // beside the label the way an Arabic reader
+                                // meets it. Declared second (as it was), the
+                                // fillWidth label took the right end and pushed
+                                // the icon to the far left of the pill.
+                                Glyph {
+                                    shape: modelData.shape
+                                    color: active ? Theme.colors.accent : Theme.colors.ink3
+                                    width: 15; height: 15
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
                                 Text {
                                     text: modelData.label
                                     font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                     font.bold: active
                                     color: active ? Theme.colors.accent : Theme.colors.ink2
                                     Layout.fillWidth: true
-                                    horizontalAlignment: Text.AlignRight
-                                }
-                                Glyph {
-                                    shape: modelData.shape
-                                    color: active ? Theme.colors.accent : Theme.colors.ink3
-                                    width: 15; height: 15
-                                    Layout.alignment: Qt.AlignVCenter
+                                    // No explicit alignment: these labels are fixed
+                                    // Arabic from the nav model, so the implicit
+                                    // first-strong-character default resolves right
+                                    // and — unlike an explicit value — is not mirrored.
                                 }
                             }
                             HoverHandler { id: hover }

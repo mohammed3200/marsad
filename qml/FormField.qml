@@ -36,8 +36,15 @@ ColumnLayout {
             color: Theme.colors.ink
             font.family: field.ltr ? Theme.fonts.mono : Theme.fonts.body
             font.pixelSize: Theme.fs.body
+            // Mirroring must stay OFF on both branches. LayoutMirroring mirrors
+            // an *explicitly set* horizontalAlignment, so with it on, AlignRight
+            // rendered AlignLeft — this is why every Arabic field's text and
+            // placeholder hugged the wrong edge. Turning it off makes the
+            // explicit value mean what it says. Explicit beats relying on the
+            // implicit (first-strong-character) default here, because the user
+            // can type Latin into an Arabic field and implicit would flip it.
             horizontalAlignment: field.ltr ? Text.AlignLeft : Text.AlignRight
-            LayoutMirroring.enabled: !field.ltr
+            LayoutMirroring.enabled: false
             selectByMouse: true
             leftPadding: field.password && !field.ltr ? 36 : 12
             rightPadding: field.password && field.ltr ? 36 : 12

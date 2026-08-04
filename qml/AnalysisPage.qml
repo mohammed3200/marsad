@@ -128,6 +128,7 @@ PageFrame {
                     font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
                     color: pg.logText === "" ? Theme.colors.ink3 : Theme.colors.ink2
                     wrapMode: Text.WordWrap
+                    LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
                     horizontalAlignment: Text.AlignRight
                     lineHeight: 1.35
                 }

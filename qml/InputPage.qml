@@ -121,6 +121,7 @@ PageFrame {
                                 Layout.fillWidth: true
                                 text: model.content
                                 maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap
+                                LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
                                 horizontalAlignment: Text.AlignRight
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                                 color: Theme.colors.ink
@@ -165,6 +166,7 @@ PageFrame {
                     color: Theme.colors.ink
                     font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
                     wrapMode: TextArea.Wrap
+                    LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
                     horizontalAlignment: Text.AlignRight
                     leftPadding: 12; rightPadding: 12; topPadding: 10; bottomPadding: 10
                     background: Rectangle {

@@ -286,6 +286,7 @@ PageFrame {
             text: pg.testMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             maximumLineCount: 2; elide: Text.ElideRight
+            LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
             horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2
@@ -324,6 +325,7 @@ PageFrame {
             text: pg.emailMsg
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             maximumLineCount: 2; elide: Text.ElideRight
+            LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
             horizontalAlignment: Text.AlignRight
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small
             color: Theme.colors.ink2

@@ -31,6 +31,11 @@ ColumnLayout {
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
             color: Theme.colors.ink
             verticalAlignment: Text.AlignVCenter
+            // Mirroring off so the explicit AlignRight below is not flipped to
+            // AlignLeft — that flip is why every combo's value sat on the wrong
+            // edge. The popup delegate below needs no such override: popups do
+            // not inherit mirroring, so its AlignRight already renders right.
+            LayoutMirroring.enabled: false
             horizontalAlignment: Text.AlignRight
             leftPadding: 12; rightPadding: 12
             elide: Text.ElideRight

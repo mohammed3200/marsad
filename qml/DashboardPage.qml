@@ -206,6 +206,7 @@ Item {
                         text: (page.model && page.model.executive_summary)
                               ? page.model.executive_summary : "—"
                         wrapMode: Text.WordWrap
+                        LayoutMirroring.enabled: false   // else the AlignRight below flips to AlignLeft
                         horizontalAlignment: Text.AlignRight
                         lineHeight: 1.5
                         font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
