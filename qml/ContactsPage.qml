@@ -48,7 +48,8 @@ PageFrame {
             spacing: 10
             AppButton { text: "مزامنة مع الإعدادات"; kind: "ghost"; onClicked: app.syncContacts() }
             Text {
-                text: "ينسخ توجيه البريد وواتساب ← الأقسام إلى الإعدادات"
+                // بلا أسهم: الخطوط المرفقة لا تحوي U+2190، فتظهر مربعاً فارغاً
+                text: "ينسخ توجيه البريد وواتساب إلى الأقسام، ويحفظه في الإعدادات"
                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                 color: Theme.colors.ink3
             }

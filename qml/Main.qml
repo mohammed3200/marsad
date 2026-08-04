@@ -345,7 +345,8 @@ Item {
 
             Text {
                 visible: !app.waLinked
-                text: "واتساب ← الأجهزة المرتبطة ← ربط جهاز ← امسح الرمز"
+                // بلا أسهم: الخطوط المرفقة لا تحوي U+2190، فتظهر مربعاً فارغاً
+                text: "من واتساب: الأجهزة المرتبطة، ثم ربط جهاز، ثم امسح الرمز"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
