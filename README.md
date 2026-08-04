@@ -107,7 +107,7 @@ any OpenAI-compatible endpoint), Gemini, or Azure OpenAI.
 ### Source (Windows · macOS · Linux)
 
 ```bash
-git clone https://github.com/<you>/marsad.git
+git clone https://github.com/mohammed3200/marsad.git
 cd marsad
 python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -135,38 +135,18 @@ the NSIS installer + portable `.exe` (Windows) and the `.deb` (Linux) and attach
 An installed app keeps its config, reports, and contacts under a per-user data dir
 (`%APPDATA%/marsad`, `~/.local/share/marsad`).
 
-### Web API (Qt-free, optional)
+### Web API — experimental, does not ship
 
-marsad also ships a FastAPI backend that exposes the same `AppController` semantics over REST + WebSocket.
-It binds **127.0.0.1 only** and reuses the same `core/`, `connectors.py`, and settings logic — no Qt is loaded.
+`api/` holds a Qt-free FastAPI mirror of `AppController`. **It is not part of this release.**
+`api/app.py` refuses to import unless `MARSAD_API_ENABLE=1` is set, so `python3 -m api` and
+`python3 run_api.py` both raise on a normal checkout — deliberately.
 
-```bash
-python3 -m api                # 127.0.0.1:8765 (set MARSAD_PORT to override)
-# or
-python3 run_api.py
-```
+It is **unauthenticated**, unhardened, and has known defects that are deferred with it (no auth or
+CSRF, unlocked guard flags, an unordered WebSocket fan-out, no busy gate on `PUT /api/settings` or
+`sync_contacts`). Do not expose it beyond loopback, and do not treat it as a supported interface.
+`docs/RELEASE_CHECKLIST.md` lists the full set.
 
-Interactive docs are at `http://127.0.0.1:8765/api/docs`. Key endpoints:
-
-| Method & path | Purpose |
-|---|---|
-| `GET /api/meta` | today label, backend, engine status |
-| `GET /api/settings` / `PUT /api/settings` | read / save settings |
-| `GET /api/reports` / `POST /api/reports` / `DELETE /api/reports` | input queue CRUD |
-| `POST /api/reports/samples` / `POST /api/reports/collect` | load demos or collect from sources |
-| `POST /api/analysis/run` | start the agent fleet |
-| `GET /api/dashboard` | latest chief output |
-| `POST /api/export/pdf` / `POST /api/export/excel` | download reports |
-| `GET /api/contacts/structure` / `GET /api/contacts/employees` | org chart |
-| `/ws` | live state snapshot + events |
-
-Build the API bundle separately:
-
-```bash
-pyinstaller marsad_api.spec   # → dist/marsad-api/
-```
-
-Verify the endpoints without a server:
+The one command that works on a normal checkout is the offline endpoint check, which opts itself in:
 
 ```bash
 python3 tools/test_api.py
@@ -197,9 +177,12 @@ tests whichever provider is selected.
 | **File upload** | «رفع ملفات» — pick `xlsx · xls · csv · pdf · txt · json · docx`. |
 | **Email (IMAP/SMTP)** | Fill the **البريد الإلكتروني** section (user, password, hosts, port, recipients), press «اختبار البريد», then «جمع من المصادر» pulls new mail. |
 | **ERP folder** | Point the **مجلد ERP** picker at a shared folder; any dropped file is read on «جمع من المصادر». |
-| **WhatsApp** | Enable it in Settings, «توليد ملف الجسر», then run the generated `whatsapp_bridge.js` once (`npm install && node whatsapp_bridge.js`, scan the QR). Group messages then flow in. |
+| **WhatsApp** | Enable it in Settings, «توليد ملف الجسر», then run the generated `whatsapp_bridge.js` once (`npm install && node whatsapp_bridge.js`, scan the QR). Group messages then flow in. **Receive-only** — marsad reads group messages, it never sends any. |
 
-«اختبار المحرّك» tests the AI engine; «اختبار البريد» tests email — independently.
+«اختبار المحرّك» tests the AI engine in two stages — it first checks the server is reachable, then that
+the model actually answers within `مهلة الاستجابة`, so a slow model is distinguishable from a dead
+endpoint. «اختبار البريد» tests email, both legs: IMAP (what collection uses) and SMTP login (what
+sending uses). It sends no message.
 
 ## Data & privacy
 
@@ -209,9 +192,9 @@ entered in the app sync their email/WhatsApp → department routing back into `s
 **مزامنة مع الإعدادات** button.
 
 - **Uploaded files** picked in the desktop app are read in place from wherever you picked them —
-  no copies are made. The optional web API is different: files sent to `POST /api/reports/files`
-  are saved under `uploads/api_<timestamp>/` and kept there until you delete them. `uploads/` is
-  gitignored either way.
+  no copies are made. The experimental web API — which does not ship in this release, see above —
+  is different: files sent to `POST /api/reports/files` are saved under `uploads/api_<timestamp>/`
+  and kept there until you delete them. `uploads/` is gitignored either way.
 - **WhatsApp session** — «توليد ملف الجسر» writes `whatsapp_bridge.js` (with the per-session
   `X-WA-Token`, also stored as `whatsapp_token` in `settings.json`), and running it creates
   `wa_session/` holding your live WhatsApp login. Both live under the per-user data dir

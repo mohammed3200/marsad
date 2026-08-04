@@ -5,9 +5,9 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 145 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 165 tests, all pass
 - [ ] `python3 tools/test_api.py` — 7 tests, all pass
-- [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`
+- [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`. Open `2-dashboard.png`: no toast across the bottom, and the lower half populated. `reports/latest.json` must be byte-identical afterwards — the harness seeds its demo result in memory only.
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
 - [ ] `git ls-files | grep -E "settings\.json$|contacts\.json$|^reports/|^logs/|^uploads/"` — no output
 - [ ] Security probes, all true:
@@ -16,17 +16,43 @@ Run this before tagging any version. Every automated item below was green on the
   - `import api.app` without `MARSAD_API_ENABLE=1` raises
   - `GET /api/settings` returns every key in `SECRET_KEYS` as `""`
 - [ ] Regression spot-checks: `AIEngine._parse_json('[{"a":1}]')` returns an error dict, not a list; `export_excel` succeeds with `"priority": "1"`; `export_pdf` succeeds with `"deviation_pct": "12%"`
+- [ ] Honesty probe — run `AgentsEngine.run_all` with an AI stub that errors on every call: the log must **not** end with `✓ اكتمل التحليل الشامل`, and `AppController._on_analysis_done` must emit `analysisFailed`, not `analysisDone`. PDF, Excel and HTML must still export with no English or traceback leaking into the Arabic output.
 
 ## Manual, on a clean machine
 
-- [ ] Fresh `python3 -m venv` + `pip install -r requirements.txt`, then `python app.py` starts
-- [ ] Settings: enter a provider key, «اختبار المحرّك» reports success
-- [ ] Input: upload one `.docx`, one `.xlsx` and one `.pdf` — all three appear with the right department
-- [ ] Run an analysis end to end against a real model — the dashboard fills and the app navigates to it
-- [ ] Export PDF and Excel — both open, Arabic reads right-to-left, no `%%` or `None%`, no `;pma&`
-- [ ] Email the report to a real address — it arrives and renders
-- [ ] Link WhatsApp, send one group message, collect — it appears as a report
-- [ ] Close the window mid-analysis — the process exits cleanly, no crash dialog, and reopening works
+Each item lists what it needs. Three of them cannot be performed on hardware that
+cannot run a model fast enough, or without a second device — plan for that rather
+than discovering it mid-pass.
+
+- [ ] **App starts.** Fresh `python3 -m venv` + `pip install -r requirements.txt`, then `python app.py`.
+      *Needs: nothing else.*
+- [ ] **«اختبار المحرّك» reports success.** *Needs: a backend that answers within `ai_timeout`
+      (default 180s).* A CPU-only local model will not — measured on the dev machine at
+      ~0.33 tok/s, where a single agent's JSON would take 25–75 minutes. The test is two-stage,
+      so even when it fails it distinguishes an unreachable server from a model that is merely
+      too slow; only the second is a hardware problem rather than a config one.
+- [ ] **Upload one `.docx`, one `.xlsx` and one `.pdf`** — all three appear with the right department.
+      *Needs: nothing else. Performable now.*
+- [ ] **Run an analysis end to end against a real model** — the dashboard fills and the app
+      navigates to it. *Needs: the same backend as «اختبار المحرّك».* On a backend where every
+      agent times out, the run now reports failure honestly (red progress track, «لم ينجح أي
+      وكيل», no navigation) instead of claiming success — that path is worth confirming too.
+- [ ] **Export PDF and Excel** — both open, Arabic reads right-to-left, no `%%` or `None%`,
+      no `;pma&`. *Needs: any completed analysis, including a failed one. Performable now.*
+- [ ] **Email the report to a real address** — it arrives and renders. *Needs:* `email_user`,
+      `email_password`, `smtp_host`, `smtp_port`, **and at least one recipient** — the Send button
+      stays disabled while both `report_recipients` and `email_dept_map` are empty. Requires a
+      completed analysis first. Run «اختبار البريد» before this: it now tests the SMTP login too,
+      so a failure there explains the send failure in advance.
+- [ ] **Link WhatsApp, send one group message, collect** — it appears as a report.
+      *Needs:* Node.js on `PATH`; a first run that installs the Baileys bridge deps (allow up to
+      600s); **a second device** — a phone with WhatsApp to scan the QR; and the group's JID mapped
+      in `whatsapp_groups`, or the message routes to `admin`. The bridge is **receive-only**; "send
+      one group message" means sending *from your phone into the group*, then pressing
+      «جمع من المصادر».
+- [ ] **Close the window mid-analysis** — the process exits cleanly, no crash dialog, and
+      reopening works. *Needs: nothing else. Performable now* (start a run against any backend,
+      even a failing one, and close while it is in flight).
 
 ## Known accepted limitations — state these in the release notes
 
