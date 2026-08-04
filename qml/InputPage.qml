@@ -118,6 +118,13 @@ PageFrame {
                             spacing: 2
                             Text {
                                 Layout.fillWidth: true
+                                // Must be explicit. Wrapping the sender in an
+                                // isolate below hides its first strong character
+                                // from paragraph-level direction detection, so
+                                // the implicit default no longer sees the Arabic
+                                // and flips the whole line left.
+                                LayoutMirroring.enabled: false
+                                horizontalAlignment: Text.AlignRight
                                 text: {
                                     var parts = []
                                     // Isolate each run so it cannot reorder the
