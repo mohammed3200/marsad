@@ -5,7 +5,7 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 165 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 177 tests, all pass
 - [ ] `python3 tools/test_api.py` — 7 tests, all pass
 - [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`. Open `2-dashboard.png`: no toast across the bottom, and the lower half populated. `reports/latest.json` must be byte-identical afterwards — the harness seeds its demo result in memory only.
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
@@ -16,6 +16,7 @@ Run this before tagging any version. Every automated item below was green on the
   - `import api.app` without `MARSAD_API_ENABLE=1` raises
   - `GET /api/settings` returns every key in `SECRET_KEYS` as `""`
 - [ ] Regression spot-checks: `AIEngine._parse_json('[{"a":1}]')` returns an error dict, not a list; `export_excel` succeeds with `"priority": "1"`; `export_pdf` succeeds with `"deviation_pct": "12%"`
+- [ ] `grep -nP '[\x{2190}-\x{21FF}]' qml/*.qml` — matches only comment lines. The bundled Arabic fonts carry no arrows, so one in a rendered string means a system-fallback dependency or a tofu box.
 - [ ] Honesty probe — run `AgentsEngine.run_all` with an AI stub that errors on every call: the log must **not** end with `✓ اكتمل التحليل الشامل`, and `AppController._on_analysis_done` must emit `analysisFailed`, not `analysisDone`. PDF, Excel and HTML must still export with no English or traceback leaking into the Arabic output.
 
 ## Manual, on a clean machine
@@ -100,11 +101,14 @@ defects are known and deferred with it:
   linger for that period. If that wait expires the process can still hit the original
   `QThread: Destroyed while thread is still running` abort — reduced from certain to
   near-zero, not eliminated.
-- `_run_fetch_models` and `_run_bridge_start` emit `notify`/`logMessage` unguarded in
-  their bodies (only their `finally` blocks got the shutdown guard). Closing the window
-  while a model list or WhatsApp bridge start is in flight can raise `RuntimeError` on
-  the daemon thread. It reaches `threading.excepthook`, not the user, and cannot corrupt
-  state — but it prints a traceback on exit.
+- `_run_collect`'s error branch still emits `notify` on its worker thread, and
+  `_run_bridge_start` writes `self._wa_log`/`self._wa_proc` directly. Same class as the
+  four workers converted to the private-signal hop, deliberately left out of that scope.
+- Some run-log lines use symbols the bundled fonts do not carry: `✓ ✗` (present only in
+  JetBrains Mono, but the log panel renders in Noto Sans Arabic) and `⏳ ⏹ 📥 📧 🖥️`
+  (absent from all three). They reach the Analysis page through `logMessage` and depend
+  on a system fallback font, which `CLAUDE.md` forbids. The two Unicode arrows in QML
+  were fixed; this set was not.
 - Department creation and employee editing are not available in the Contacts UI; the
   seeded default org structure is what ships.
 - Filename-based department routing is best-effort. `5Gcore_report.csv` does not route
