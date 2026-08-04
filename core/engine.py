@@ -356,13 +356,46 @@ class AIEngine:
         except Exception as e:
             return {"error": f"رد غير متوقع: {friendly_error(str(e))}"}
 
+    # Backends whose list_models() makes a real, cheaply-bounded network call
+    # (10-15s, independent of ai_timeout) and so can answer "is the server
+    # even reachable?" before we spend ai_timeout finding out. claude returns
+    # a hardcoded list and azure returns False unconditionally — neither
+    # touches the network, so for those there is nothing cheap to probe and
+    # the generation round-trip is the only test available.
+    _REACHABILITY_BACKENDS = ("ollama", "openai", "gemini")
+
     def test_connection(self) -> tuple:
-        """اختبار الاتصال بالمحرّك المُختار (يعمل لكل المزوّدين عبر ask())."""
+        """اختبار الاتصال بالمحرّك المُختار — مرحلتان: الوصول ثم التوليد.
+
+        Split into two stages because one round-trip could not tell the user
+        *which* thing was broken. A CPU-bound local model at a fraction of a
+        token per second times out exactly like an unreachable server does,
+        and the single message that came back — «انتهت مهلة الاتصال» — sent
+        the user to check a network that was fine.
+        """
+        backend = self.settings.get("ai_backend", "ollama")
+        if backend in self._REACHABILITY_BACKENDS:
+            reachable, detail = self.list_models()
+            if not reachable:
+                detail = str(detail)
+                # friendly_error already classifies the common cases and its
+                # wording can carry this same phrase — don't stutter it back.
+                if "تعذّر الوصول إلى الخادم" in detail:
+                    return False, detail
+                return False, f"تعذّر الوصول إلى الخادم: {detail}"
+
         result = _as_result(self.ask(
             "أجب بـ JSON فقط.",
             'أجب بالتالي حرفياً: {"status":"ok","message":"الاتصال ناجح"}'
         ))
         if "error" in result:
+            if backend in self._REACHABILITY_BACKENDS:
+                # Stage 1 already passed, so the server is up: the model is
+                # what did not answer in time. Say so, and name the setting
+                # the user can actually change.
+                return False, (f"الخادم يستجيب لكن النموذج لم يُكمل الرد: "
+                               f"{result['error']} — جرّب نموذجاً أخف أو زد "
+                               f"مهلة الاستجابة في الإعدادات")
             return False, result["error"]
         return True, result.get("message", "الاتصال ناجح")
 

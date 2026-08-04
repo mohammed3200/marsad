@@ -153,5 +153,86 @@ class ClaudeHttpErrorClassificationTests(unittest.TestCase):
         self.assertEqual(msg, "مفتاح API غير صالح أو بلا صلاحية — تحقق من المفتاح")
 
 
+class TwoStageConnectionTests(unittest.TestCase):
+    """One round-trip could not tell the user which thing was broken.
+
+    Measured on the owner's machine: a CPU-only ollama at ~0.33 tok/s times
+    out exactly like an unreachable server does, and the one message that
+    came back — «انتهت مهلة الاتصال» — sent them to check a network that was
+    fine. Stage 1 reuses list_models(), which already bounds itself at 10-15s
+    independently of ai_timeout."""
+
+    def setUp(self):
+        self._real = urllib.request.urlopen
+
+    def tearDown(self):
+        urllib.request.urlopen = self._real
+
+    def test_unreachable_server_says_so_and_never_reaches_generation(self):
+        asked = []
+
+        def refuse(req, timeout=None):
+            asked.append(req.full_url)
+            raise urllib.error.URLError("Connection refused")
+
+        urllib.request.urlopen = refuse
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "ollama"}).test_connection()
+        self.assertFalse(ok)
+        self.assertIn("تعذّر الوصول إلى الخادم", msg)
+        # Stage 1 short-circuits: only /api/tags was tried, never /api/generate.
+        self.assertTrue(all("/api/tags" in u for u in asked), asked)
+
+    def test_reachable_server_but_slow_model_blames_the_model(self):
+        def dispatch(req, timeout=None):
+            if "/api/tags" in req.full_url:
+                return _Resp({"models": [{"name": "m"}]})
+            raise TimeoutError()
+
+        urllib.request.urlopen = dispatch
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "ollama"}).test_connection()
+        self.assertFalse(ok)
+        self.assertIn("الخادم يستجيب", msg)
+        self.assertNotIn("تعذّر الوصول إلى الخادم", msg)
+        # names the setting the user can actually change
+        self.assertIn("مهلة الاستجابة", msg)
+
+    def test_both_stages_passing_still_succeeds(self):
+        def dispatch(req, timeout=None):
+            if "/api/tags" in req.full_url:
+                return _Resp({"models": [{"name": "m"}]})
+            return _Resp({"response": '{"status":"ok","message":"الاتصال ناجح"}'})
+
+        urllib.request.urlopen = dispatch
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "ollama"}).test_connection()
+        self.assertTrue(ok)
+        self.assertEqual(msg, "الاتصال ناجح")
+
+    def test_claude_has_no_cheap_probe_so_its_message_is_unchanged(self):
+        """list_models() for claude is a hardcoded list — it touches no
+        network, so it cannot answer 'is the server up?'. Prefixing its
+        failures with a reachability verdict would be a lie."""
+        def raise_401(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url, 401, "Unauthorized", {},
+                io.BytesIO(b'{"error":{"message":"invalid x-api-key"}}'))
+
+        urllib.request.urlopen = raise_401
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "claude"}).test_connection()
+        self.assertFalse(ok)
+        self.assertEqual(msg, "مفتاح API غير صالح أو بلا صلاحية — تحقق من المفتاح")
+
+    def test_the_return_shape_is_unchanged(self):
+        """Both callers — AppController._run_connection_test and
+        api/services.py — unpack (ok, msg)."""
+        urllib.request.urlopen = lambda req, timeout=None: _Resp(
+            {"models": [{"name": "m"}]}) if "/api/tags" in req.full_url else _Resp(
+            {"response": '{"status":"ok"}'})
+        out = AIEngine({**SETTINGS, "ai_backend": "ollama"}).test_connection()
+        self.assertIsInstance(out, tuple)
+        self.assertEqual(len(out), 2)
+        self.assertIsInstance(out[0], bool)
+        self.assertIsInstance(out[1], str)
+
+
 if __name__ == "__main__":
     unittest.main()
