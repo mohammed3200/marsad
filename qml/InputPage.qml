@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 PageFrame {
     id: pg
     title: "إدخال البيانات"
-    subtitle: "أضف تقارير ميدانية أو حمّل النماذج، ثم انتقل إلى «التحليل والوكلاء»"
+    subtitle: "أضف تقارير ميدانية أو ارفع ملفات أو اجمعها من المصادر، ثم انتقل إلى «التحليل والوكلاء»"
 
     readonly property var deptOptions: [
         "شبكة الراديو RAN", "شبكة النواة Core", "العمليات", "الجودة", "السلامة",
@@ -40,7 +40,6 @@ PageFrame {
     RowLayout {
         Layout.fillWidth: true
         spacing: 10
-        AppButton { text: "تحميل نماذج تجريبية"; kind: "ghost"; onClicked: app.loadSamples() }
         AppButton { text: "رفع ملفات"; kind: "ghost"; onClicked: app.pickReportFiles() }
         AppButton {
             text: app.collecting ? "جارٍ الجمع…" : "جمع من المصادر"; kind: "ghost"
@@ -72,7 +71,7 @@ PageFrame {
             Layout.preferredHeight: 140
             visible: app.reportCount === 0
             message: "لا توجد تقارير بعد"
-            hint: "حمّل النماذج أو أضف تقريراً من النموذج بالأسفل"
+            hint: "ارفع ملفاً، أو اجمع من المصادر، أو أضف تقريراً من النموذج بالأسفل"
         }
 
         ColumnLayout {
@@ -91,12 +90,24 @@ PageFrame {
                             spacing: 2
                             Text {
                                 text: pg.sourceLabel(source)
+                                // Explicit, with mirroring off: these labels can be
+                                // Latin ("ERP", or an unmapped raw key falling through
+                                // deptLabel's `m[d] || d`), and implicit alignment would
+                                // flip the whole row left on the first strong character.
+                                LayoutMirroring.enabled: false
+                                horizontalAlignment: Text.AlignRight
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.small; font.bold: true
                                 color: Theme.colors.ink
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: pg.deptLabel(dept)
+                                // Explicit, with mirroring off: these labels can be
+                                // Latin ("ERP", or an unmapped raw key falling through
+                                // deptLabel's `m[d] || d`), and implicit alignment would
+                                // flip the whole row left on the first strong character.
+                                LayoutMirroring.enabled: false
+                                horizontalAlignment: Text.AlignRight
                                 elide: Text.ElideLeft
                                 font.family: Theme.fonts.body; font.pixelSize: Theme.fs.caption
                                 color: Theme.colors.ink3
@@ -109,8 +120,16 @@ PageFrame {
                                 Layout.fillWidth: true
                                 text: {
                                     var parts = []
-                                    parts.push(from_ || "—")
-                                    // isolate the date run so it never reorders inside the RTL line
+                                    // Isolate each run so it cannot reorder the
+                                    // RTL line or drag the whole row's implicit
+                                    // alignment with it. `from_` is a raw
+                                    // filename for uploads, so it may start
+                                    // Latin or Arabic — U+2068 FIRST STRONG
+                                    // ISOLATE lets the run pick its own
+                                    // direction. The date is always digits, so
+                                    // U+2066 LEFT-TO-RIGHT ISOLATE is right for
+                                    // it. U+2069 POP closes both.
+                                    parts.push(from_ ? "⁨" + from_ + "⁩" : "—")
                                     if (date) parts.push("⁦" + date + "⁩")
                                     return parts.join("  ·  ")
                                 }

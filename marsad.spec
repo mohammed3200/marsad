@@ -17,7 +17,6 @@ datas = [
     ("qml", "qml"),
     ("assets", "assets"),
     ("settings.example.json", "."),
-    ("sample_reports.json", "."),
 ]
 binaries = []
 hiddenimports = []

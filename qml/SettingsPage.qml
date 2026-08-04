@@ -356,10 +356,16 @@ PageFrame {
         spacing: 12
         CheckBox {
             id: waEnabled
+            // `text` must be set even though contentItem overrides the rendering.
+            // Basic's default indicator positions itself with
+            //   x: control.text ? <edge> : <centre of availableWidth>
+            // so leaving it empty parked the box in the middle of the label
+            // instead of at the leading edge.
+            text: "تفعيل استقبال واتساب"
             checked: app.settings.whatsapp_enabled === true
             font.family: Theme.fonts.body; font.pixelSize: Theme.fs.body
             contentItem: Text {
-                text: "تفعيل استقبال واتساب"; rightPadding: waEnabled.indicator.width + 8
+                text: waEnabled.text; rightPadding: waEnabled.indicator.width + 8
                 font: waEnabled.font; color: Theme.colors.ink; verticalAlignment: Text.AlignVCenter
             }
         }

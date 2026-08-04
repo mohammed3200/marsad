@@ -20,7 +20,9 @@ PageFrame {
 
     Connections {
         target: app
-        function onExportDone(path) { pg.notice = "حُفظ الملف: " + path; pg.noticeError = false }
+        // Isolate the path: it is a filesystem run inside Arabic prose, and
+        // without U+2068…U+2069 its Latin segments reorder around the Arabic.
+        function onExportDone(path) { pg.notice = "حُفظ الملف: ⁨" + path + "⁩"; pg.noticeError = false }
         function onExportFailed(msg) { pg.notice = "تعذّر التصدير: " + msg; pg.noticeError = true }
     }
 
