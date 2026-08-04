@@ -66,6 +66,15 @@ class AppController(QObject):
     _collected        = Signal("QVariant")   # reports gathered off the GUI thread
     _filesAdded       = Signal("QVariant")   # files parsed off the GUI thread
     _emailSent        = Signal(bool, str)    # SMTP result, worker thread → GUI thread
+    # Same hop for the other daemon-thread workers. A worker must hand its
+    # result across and stop there: touching controller state or emitting a
+    # public signal from the worker thread races the GUI thread, and — if the
+    # app is quitting — can raise "Signal source has been deleted" out of a
+    # daemon thread, where nothing catches it.
+    _connTested       = Signal(bool, str)             # engine test result
+    _mailTested       = Signal(bool, str)             # email test result
+    _modelsFetched    = Signal(bool, "QVariant", str) # ok, models, message
+    _workerMessage    = Signal(str, str)              # (kind, text); kind ∈ log|notify
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -93,6 +102,10 @@ class AppController(QObject):
         self._collected.connect(self._on_collected)
         self._filesAdded.connect(self._on_files_added)
         self._emailSent.connect(self._on_email_sent)
+        self._connTested.connect(self._on_conn_tested)
+        self._mailTested.connect(self._on_mail_tested)
+        self._modelsFetched.connect(self._on_models_fetched)
+        self._workerMessage.connect(self._on_worker_message)
         self._hub.set_logger(lambda m: self.logMessage.emit(str(m)))
         self._exports    = []
         self._recipients = []
@@ -679,19 +692,31 @@ class AppController(QObject):
         threading.Thread(target=self._run_connection_test, daemon=True).start()
 
     def _run_connection_test(self):
-        """اختبار المحرّك على خيط منفصل — النداء قد يستغرق حتى ai_timeout."""
+        """اختبار المحرّك على خيط منفصل — النداء قد يستغرق حتى ai_timeout.
+
+        The worker only hands the result across; `_on_conn_tested` does the
+        state change and the public emits on the GUI thread.
+        """
         try:
             try:
                 ok, msg = self._ai.test_connection()
             except Exception as e:
                 log.warning("connection test failed: %s", e, exc_info=True)
                 ok, msg = False, friendly_error(str(e))
-            self._online = ok
-            self._status = "متصل" if ok else "غير متصل"
-            self.engineChanged.emit()
-            self.connectionTested.emit(ok, msg)
+            if not self._shutting_down:
+                try:
+                    self._connTested.emit(ok, msg)
+                except RuntimeError:
+                    pass          # C++ half already gone — nothing left to notify
         finally:
             self._set_testing_engine(False)
+
+    @Slot(bool, str)
+    def _on_conn_tested(self, ok, msg):
+        self._online = ok
+        self._status = "متصل" if ok else "غير متصل"
+        self.engineChanged.emit()
+        self.connectionTested.emit(ok, msg)
 
     @Slot("QVariant")
     def saveSettings(self, values):
@@ -819,11 +844,14 @@ class AppController(QObject):
             except Exception as e:
                 log.warning("model list fetch failed: %s", e, exc_info=True)
                 ok, out = False, friendly_error(str(e))
-            self._models = list(out) if ok and isinstance(out, list) else []
-            if self._models:
-                self.notify.emit(f"جُلبت {len(self._models)} نموذجاً")
-            else:
-                self.notify.emit(out if isinstance(out, str) else "تعذّر جلب النماذج")
+            models = list(out) if ok and isinstance(out, list) else []
+            msg = (f"جُلبت {len(models)} نموذجاً" if models
+                   else (out if isinstance(out, str) else "تعذّر جلب النماذج"))
+            if not self._shutting_down:
+                try:
+                    self._modelsFetched.emit(bool(models), models, msg)
+                except RuntimeError:
+                    pass          # C++ half already gone — nothing left to notify
         finally:
             # Guarded setter, not a raw emit: this runs in a finally block
             # on a daemon thread that can easily outlive QCoreApplication
@@ -831,6 +859,29 @@ class AppController(QObject):
             # same class of bug tests/test_shutdown.py's guard-flag test
             # exists for (see _set_sending_email et al.).
             self._set_models_busy(False)
+
+    @Slot(bool, "QVariant", str)
+    def _on_models_fetched(self, ok, models, msg):
+        self._models = list(models or [])
+        self.modelsChanged.emit()
+        self.notify.emit(msg)
+
+    @Slot(str, str)
+    def _on_worker_message(self, kind, text):
+        """One hop for workers that report progress rather than a single result."""
+        if kind == "log":
+            self.logMessage.emit(text)
+        else:
+            self.notify.emit(text)
+
+    def _emit_from_worker(self, kind, text):
+        """Called ON a worker thread. Never emits a public signal directly."""
+        if self._shutting_down:
+            return
+        try:
+            self._workerMessage.emit(kind, text)
+        except RuntimeError:
+            pass              # C++ half already gone — nothing left to notify
 
     def _rebuild_hub(self):
         # Stop the old hub's listeners *before* draining its buffer, not
@@ -879,10 +930,18 @@ class AppController(QObject):
             except Exception as e:
                 log.warning("email test failed: %s", e, exc_info=True)
                 ok, msg = False, friendly_error(str(e))
-            # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
-            self.emailTested.emit(ok, msg)
+            if not self._shutting_down:
+                try:
+                    self._mailTested.emit(ok, msg)
+                except RuntimeError:
+                    pass          # C++ half already gone — nothing left to notify
         finally:
             self._set_testing_email(False)
+
+    @Slot(bool, str)
+    def _on_mail_tested(self, ok, msg):
+        # الرسالة تظهر بجانب الزر (emailTested) — لا تُكرَّر كتنبيه منبثق فوقها
+        self.emailTested.emit(ok, msg)
 
     @Slot(result="QVariant")
     def getSettings(self):
@@ -962,15 +1021,24 @@ class AppController(QObject):
 
     @Slot()
     def generateWhatsAppBridge(self):
+        self.notify.emit(self._write_bridge_file()[1])
+
+    def _write_bridge_file(self):
+        """Write the bridge JS and return (ok, message) — emits nothing.
+
+        Split out so `_run_bridge_start`, which runs on a daemon thread, can
+        reuse it without going through the slot above and emitting `notify`
+        off the GUI thread.
+        """
         from connectors import WhatsAppHelper
         try:
             port = int(self._settings.get("whatsapp_port", 5051))
             token = getattr(self._hub, "wa_token", "")
             path = WhatsAppHelper.save_bridge_file(port, token=token)
-            self.notify.emit(f"أُنشئ ملف الجسر: {path}")
+            return True, f"أُنشئ ملف الجسر: {path}"
         except Exception as e:
             log.warning("whatsapp bridge file generation failed: %s", e, exc_info=True)
-            self.notify.emit(f"تعذّر إنشاء الجسر: {friendly_fs_error(e)}")
+            return False, f"تعذّر إنشاء الجسر: {friendly_fs_error(e)}"
 
     @Slot()
     def checkNode(self):
@@ -1015,9 +1083,9 @@ class AppController(QObject):
         try:
             bridge = DATA_DIR / "whatsapp_bridge.js"
             if not bridge.exists():
-                self.generateWhatsAppBridge()
+                self._emit_from_worker("notify", self._write_bridge_file()[1])
             if not (DATA_DIR / "node_modules").exists():
-                self.logMessage.emit("واتساب: تثبيت حزم Node (أول مرة فقط)…")
+                self._emit_from_worker("log", "واتساب: تثبيت حزم Node (أول مرة فقط)…")
                 pkg = DATA_DIR / "package.json"
                 if not pkg.exists():
                     pkg.write_text(json.dumps({
@@ -1031,7 +1099,7 @@ class AppController(QObject):
                 r = subprocess.run(["npm", "install"], cwd=str(DATA_DIR),
                                    capture_output=True, text=True, timeout=600)
                 if r.returncode != 0:
-                    self.notify.emit("تعذّر تثبيت حزم Node — شغّل npm install يدوياً في مجلد البيانات")
+                    self._emit_from_worker("notify", "تعذّر تثبيت حزم Node — شغّل npm install يدوياً في مجلد البيانات")
                     return
             log_dir = DATA_DIR / "logs"
             log_dir.mkdir(exist_ok=True)
@@ -1042,12 +1110,12 @@ class AppController(QObject):
                 stdout=self._wa_log, stderr=subprocess.STDOUT)
             import atexit
             atexit.register(self.stopWhatsAppBridge)
-            self.logMessage.emit("واتساب: الجسر يعمل — بانتظار رمز الربط")
+            self._emit_from_worker("log", "واتساب: الجسر يعمل — بانتظار رمز الربط")
         except FileNotFoundError:
-            self.notify.emit("Node.js غير مثبّت — ثبّته أولاً من الخطوة 2")
+            self._emit_from_worker("notify", "Node.js غير مثبّت — ثبّته أولاً من الخطوة 2")
         except Exception as e:
             log.warning("whatsapp bridge start failed: %s", e, exc_info=True)
-            self.notify.emit(f"تعذّر تشغيل الجسر: {friendly_fs_error(e)}")
+            self._emit_from_worker("notify", f"تعذّر تشغيل الجسر: {friendly_fs_error(e)}")
         finally:
             # Guarded setter, not a raw emit: this finally block runs on a
             # daemon thread (npm install / node startup) that can easily
