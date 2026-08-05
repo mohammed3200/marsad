@@ -58,6 +58,28 @@ def _cell(value):
     return value if isinstance(value, (str, int, float, bool, type(None))) else str(value)
 
 
+def _wrap_rtl(text: str, measure, width: float) -> list:
+    """Break `text` into lines that fit `width`, working on the LOGICAL text.
+
+    `measure(str) -> float` reports the rendered width of a candidate line.
+
+    Kept module-level and dependency-free so it can be tested without
+    reportlab, fonts, or a PDF: the ordering bug this exists to prevent is
+    pure list logic, and the reshaping around it is not what got it wrong.
+    """
+    lines, cur = [], ""
+    for word in str(text or "").split():
+        trial = f"{cur} {word}".strip()
+        if not cur or measure(trial) <= width:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def export_pdf(results: dict, output_path: str) -> str:
     """Branded Arabic PDF — Light Executive Report identity (white paper,
     hairlines, one teal accent, status as colored words/dots).
@@ -95,7 +117,7 @@ def export_pdf(results: dict, output_path: str) -> str:
     def _has_ar(s):
         return any("؀" <= ch <= "ۿ" for ch in s)
 
-    def ar(text):
+    def ar(text, width=None, font="Naskh", size=11):
         """Arabic-ready string for a reportlab Paragraph: reshape → bidi → escape.
 
         Escaping must come last: XML entities contain Latin letters and ASCII
@@ -103,11 +125,31 @@ def export_pdf(results: dict, output_path: str) -> str:
 
         En/em dashes become hyphen-minus first: U+2013/2014 break the BiDi
         number run (renders "8060" out of "60–80%"), while ES separators
-        (-, /, .) keep digits as one LTR run."""
+        (-, /, .) keep digits as one LTR run.
+
+        `width` is REQUIRED for any text that can wrap to more than one line.
+        get_display() reverses the whole string, so if reportlab then breaks
+        that already-reversed run into lines, the lines come out bottom-up —
+        the last sentence renders first. Passing the column width makes this
+        wrap the *logical* text itself and reverse each line separately, which
+        keeps line order. Found on the first real model run: every multi-line
+        block in the PDF — the executive summary and every risk-table cell —
+        read bottom-to-top. Short fixtures never wrapped, so no test saw it.
+        """
         s = str(text if text is not None else "")
         s = s.replace("–", "-").replace("—", "-")
-        s = get_display(arabic_reshaper.reshape(s)) if _has_ar(s) else s
-        return _esc(s)
+        if not _has_ar(s):
+            return _esc(s)
+        if width is None:
+            return _esc(get_display(arabic_reshaper.reshape(s)))
+
+        def measure(candidate):
+            return pdfmetrics.stringWidth(
+                get_display(arabic_reshaper.reshape(candidate)), font, size)
+
+        return "<br/>".join(
+            _esc(get_display(arabic_reshaper.reshape(line)))
+            for line in _wrap_rtl(s, measure, width))
 
     # ── identity tokens (backend/theme.py) ──
     INK   = colors.HexColor("#141A22")
@@ -200,7 +242,8 @@ def export_pdf(results: dict, output_path: str) -> str:
     if chief.get("executive_summary"):
         story.extend(section("الملخص التنفيذي"))
         story.append(Spacer(1, 6))
-        story.append(Table([[Paragraph(ar(chief["executive_summary"]),
+        story.append(Table([[Paragraph(ar(chief["executive_summary"],
+                                          CONTENT_W - 0.35 * cm - 8, "Naskh", 11),
                                        PS("sum", "Naskh", 11, INK, leading=18)), ""]],
             colWidths=[CONTENT_W - 0.35 * cm, 0.35 * cm],
             style=TableStyle([("BACKGROUND", (1, 0), (1, 0), ACC),
@@ -220,7 +263,7 @@ def export_pdf(results: dict, output_path: str) -> str:
         for k in kpis:
             k = _obj(k)
             s = k.get("status", "")
-            data.append([Paragraph(ar(k.get("name", "")), PS("kn", "Naskh", 10, INK)),
+            data.append([Paragraph(ar(k.get("name", ""), 8 * cm - 8, "Naskh", 10), PS("kn", "Naskh", 10, INK)),
                          val(k.get("value", "")),
                          val(k.get("trend", ""), color=INK2),
                          val(s, color=status_color(s), bold=True)])
@@ -236,8 +279,10 @@ def export_pdf(results: dict, output_path: str) -> str:
             act = _obj(act)
             meta = "  ·  ".join(p for p in (act.get("owner", ""), act.get("deadline", ""),
                                             act.get("impact", "")) if p)
-            row = Table([[Paragraph(ar(act.get("action", "")), PS("aa", "Naskh-Bold", 10, INK))],
-                         [Paragraph(ar(meta), PS("am", "Naskh", 8.5, INK2))]],
+            row = Table([[Paragraph(ar(act.get("action", ""), CONTENT_W - 1.2 * cm - 8, "Naskh-Bold", 10),
+                                    PS("aa", "Naskh-Bold", 10, INK))],
+                         [Paragraph(ar(meta, CONTENT_W - 1.2 * cm - 8, "Naskh", 8.5),
+                                    PS("am", "Naskh", 8.5, INK2))]],
                 colWidths=[CONTENT_W],
                 style=TableStyle([("LINEBELOW", (0, -1), (-1, -1), 0.4, LINE),
                                   ("TOPPADDING", (0, 0), (-1, 0), 8),
@@ -261,10 +306,10 @@ def export_pdf(results: dict, output_path: str) -> str:
         for rk in risks:
             rk = _obj(rk)
             lv = rk.get("level", "")
-            data.append([Paragraph(ar(rk.get("title", "")), PS("rt", "Naskh-Bold", 9, INK)),
+            data.append([Paragraph(ar(rk.get("title", ""), 4.5 * cm - 8, "Naskh-Bold", 9), PS("rt", "Naskh-Bold", 9, INK)),
                          val(lv, color=status_color(lv), size=9, bold=True),
-                         Paragraph(ar(rk.get("description", "")), PS("rd", "Naskh", 8.5, INK2)),
-                         Paragraph(ar(rk.get("solution", "")), PS("rs", "Naskh", 8.5, INK2))])
+                         Paragraph(ar(rk.get("description", ""), 5 * cm - 8, "Naskh", 8.5), PS("rd", "Naskh", 8.5, INK2)),
+                         Paragraph(ar(rk.get("solution", ""), 5 * cm - 8, "Naskh", 8.5), PS("rs", "Naskh", 8.5, INK2))])
         story.append(Table(data, colWidths=[4.5 * cm, 2.5 * cm, 5 * cm, 5 * cm],
                            style=TableStyle(rows_style(len(data), header=True) +
                                             [("VALIGN", (0, 0), (-1, -1), "TOP")])))
@@ -272,7 +317,7 @@ def export_pdf(results: dict, output_path: str) -> str:
     # ── schedule ──
     story.extend(section("الجدول الزمني"))
     story.append(Spacer(1, 4))
-    sdata = [[Paragraph(ar(lbl), PS("sl", "Naskh", 10, INK2)), val(v)]
+    sdata = [[Paragraph(ar(lbl, 10 * cm - 8, "Naskh", 10), PS("sl", "Naskh", 10, INK2)), val(v)]
              for lbl, v in (("التأخير (يوم)", sched.get("delay_days", "-")),
                             ("الإنهاء الأصلي", sched.get("original_end", "-")),
                             ("الإنهاء الجديد", sched.get("new_end", "-")))]
@@ -283,7 +328,7 @@ def export_pdf(results: dict, output_path: str) -> str:
     story.extend(section("الوضع المالي"))
     story.append(Spacer(1, 4))
     dev = _num(fin.get("deviation_pct", 0))
-    fdata = [[Paragraph(ar(lbl), PS("fl", "Naskh", 10, INK2)), val(v)]
+    fdata = [[Paragraph(ar(lbl, 10 * cm - 8, "Naskh", 10), PS("fl", "Naskh", 10, INK2)), val(v)]
              for lbl, v in (("الميزانية الإجمالية", fin.get("total_budget", "-")),
                             ("المُنفَق", fin.get("spent", "-")),
                             ("المتبقي", fin.get("remaining", "-")),

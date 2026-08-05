@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from core.exporters import export_excel, export_pdf
+from core.exporters import _wrap_rtl, export_excel, export_pdf
 from connectors import build_report_html
 
 
@@ -211,6 +211,59 @@ class DepartmentCoverageTests(unittest.TestCase):
         for label in ("المشتريات", "المخازن"):
             self.assertIn(label, text)
 
+
+class RtlLineOrderTests(unittest.TestCase):
+    """Multi-line Arabic in the PDF used to read bottom-to-top.
+
+    `ar()` ran get_display() over the whole string, which reverses it; when
+    reportlab then broke that already-reversed run into lines, the last
+    sentence landed on the first line. Found on the first real model run —
+    the executive summary and every risk-table cell were affected. No fixture
+    caught it because every hand-written test string fit on one line.
+
+    _wrap_rtl breaks the LOGICAL text so each line can be reversed on its own.
+    `measure=len` stands in for font metrics: the ordering bug is list logic,
+    and testing it this way needs no fonts, no reportlab and no PDF.
+    """
+
+    TEXT = ("تم إنجاز أربعة عشر برجا من أصل ثلاثة وعشرين "
+            "واستهلك المشروع ستين بالمئة من الميزانية "
+            "وهناك تأخير حاسم في الشحنة يتطلب حلا عاجلا")
+
+    def test_the_first_line_is_the_start_of_the_text(self):
+        lines = _wrap_rtl(self.TEXT, len, 40)
+        self.assertGreater(len(lines), 1, "test text must actually wrap")
+        self.assertTrue(self.TEXT.startswith(lines[0]))
+
+    def test_the_last_line_is_the_end_of_the_text(self):
+        lines = _wrap_rtl(self.TEXT, len, 40)
+        self.assertTrue(self.TEXT.endswith(lines[-1]))
+
+    def test_joining_the_lines_reproduces_the_text(self):
+        """No word dropped, none duplicated, order preserved."""
+        lines = _wrap_rtl(self.TEXT, len, 40)
+        self.assertEqual(" ".join(lines).split(), self.TEXT.split())
+
+    def test_every_line_fits_the_width(self):
+        lines = _wrap_rtl(self.TEXT, len, 40)
+        for line in lines:
+            self.assertLessEqual(len(line), 40, line)
+
+    def test_a_word_longer_than_the_width_still_emits(self):
+        """A single over-long token must not vanish or loop forever."""
+        lines = _wrap_rtl("قصير كلمةطويلةجدالاتناسبالعرض", len, 8)
+        self.assertEqual(" ".join(lines).split(),
+                         "قصير كلمةطويلةجدالاتناسبالعرض".split())
+
+    def test_empty_and_none_are_safe(self):
+        self.assertEqual(_wrap_rtl("", len, 40), [])
+        self.assertEqual(_wrap_rtl(None, len, 40), [])
+
+    def test_the_pdf_still_builds_with_a_long_arabic_summary(self):
+        res = hostile_results()
+        res["chief"]["executive_summary"] = self.TEXT * 4
+        out = export_pdf(res, os.path.join(tempfile.mkdtemp(), "wrap.pdf"))
+        self.assertGreater(os.path.getsize(out), 3000)
 
 if __name__ == "__main__":
     unittest.main()
