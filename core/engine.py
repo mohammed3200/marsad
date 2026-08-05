@@ -390,12 +390,18 @@ class AIEngine:
         ))
         if "error" in result:
             if backend in self._REACHABILITY_BACKENDS:
-                # Stage 1 already passed, so the server is up: the model is
-                # what did not answer in time. Say so, and name the setting
-                # the user can actually change.
-                return False, (f"الخادم يستجيب لكن النموذج لم يُكمل الرد: "
-                               f"{result['error']} — جرّب نموذجاً أخف أو زد "
-                               f"مهلة الاستجابة في الإعدادات")
+                # Stage 1 already passed, so the server is up and the fault is
+                # downstream of reachability. Only *timeouts* are fixed by a
+                # lighter model or a longer wait — appending that advice to a
+                # quota or auth failure sends the user to the wrong setting.
+                # Found on a real Gemini run: an exhausted quota came back
+                # telling the user to try a lighter model.
+                err = str(result["error"])
+                if "انتهت مهلة" in err:
+                    return False, (f"الخادم يستجيب لكن النموذج لم يُكمل الرد: "
+                                   f"{err} — جرّب نموذجاً أخف أو زد "
+                                   f"مهلة الاستجابة في الإعدادات")
+                return False, f"الخادم يستجيب لكن الطلب فشل: {err}"
             return False, result["error"]
         return True, result.get("message", "الاتصال ناجح")
 

@@ -204,6 +204,26 @@ class TwoStageConnectionTests(unittest.TestCase):
         # names the setting the user can actually change
         self.assertIn("مهلة الاستجابة", msg)
 
+    def test_a_quota_failure_does_not_advise_a_lighter_model(self):
+        """Found on a real Gemini run. Stage 1 passed and stage 2 came back
+        «تجاوزت حصة المزوّد» — an exhausted quota — but the message appended
+        "try a lighter model or raise the timeout", which fixes neither. Only
+        a timeout earns that advice."""
+        def dispatch(req, timeout=None):
+            if "/models?" in req.full_url or req.full_url.endswith("/models"):
+                return _Resp({"models": [{"name": "models/gm",
+                                          "supportedGenerationMethods": ["generateContent"]}]})
+            raise urllib.error.HTTPError(
+                req.full_url, 429, "Too Many Requests", {},
+                io.BytesIO(b'{"error":{"message":"quota exceeded"}}'))
+
+        urllib.request.urlopen = dispatch
+        ok, msg = AIEngine({**SETTINGS, "ai_backend": "gemini"}).test_connection()
+        self.assertFalse(ok)
+        self.assertIn("الخادم يستجيب", msg)          # stage 1 passed, still said so
+        self.assertNotIn("نموذجاً أخف", msg)         # but no bogus advice
+        self.assertNotIn("مهلة الاستجابة", msg)
+
     def test_both_stages_passing_still_succeeds(self):
         def dispatch(req, timeout=None):
             if "/api/tags" in req.full_url:
