@@ -40,12 +40,12 @@ screenshots below are that run — not mock data.
 | Analysis engine — 5 providers (Ollama · Claude · OpenAI-compatible · Gemini · Azure) | Verified against a live model; per-provider request shapes covered by tests |
 | PDF · Excel · HTML export | Verified against real model output |
 | Email — IMAP collection | Verified against a real mailbox |
-| Email — SMTP send | Implemented and tested against a stub; **no message has been sent to a real address yet** |
+| Email — SMTP send | Message construction verified byte-for-byte (Arabic subject, UTF-8 HTML, intact attachments, verified TLS); the network hop to a live inbox is the one thing left untried |
 | WhatsApp receiver + Baileys bridge | Verified with a real linked device |
 | File upload — `xlsx · csv · pdf · txt · json · docx` | Each format round-trips in tests |
 | Packaging — Windows installer, portable `.exe`, Debian `.deb` | Built in CI on a `v*` tag |
 
-179 tests (`python3 -m unittest discover -s tests`). `docs/RELEASE_CHECKLIST.md` gates a release.
+185 tests (`python3 -m unittest discover -s tests`). `docs/RELEASE_CHECKLIST.md` gates a release.
 
 **First run** starts empty by design: no recipients, no routing maps, no sample data. Configure the
 engine in **الإعدادات**, add people in **جهات الاتصال**, then «مزامنة مع الإعدادات» to build the

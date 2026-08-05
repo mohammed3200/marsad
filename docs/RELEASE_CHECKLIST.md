@@ -5,7 +5,7 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 179 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 185 tests, all pass
 - [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`. Open `2-dashboard.png`: no toast across the bottom, and the lower half populated. `reports/latest.json` must be byte-identical afterwards — the harness seeds its demo result in memory only.
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
 - [ ] `git ls-files | grep -E "settings\.json$|contacts\.json$|^reports/|^logs/|^uploads/"` — no output
@@ -43,8 +43,12 @@ than discovering it mid-pass.
 - [ ] **Email the report to a real address** — it arrives and renders. *Needs:* `email_user`,
       `email_password`, `smtp_host`, `smtp_port`, **and at least one recipient** — the Send button
       stays disabled while both `report_recipients` and `email_dept_map` are empty. Requires a
-      completed analysis first. Run «اختبار البريد» before this: it now tests the SMTP login too,
-      so a failure there explains the send failure in advance.
+      completed analysis first. Run «اختبار البريد» before this: it tests the SMTP login too, so a
+      failure there explains the send failure in advance.
+      The *message* is already verified — `SentMessageWireFormatTests` captures the bytes handed to
+      sendmail and parses them back the way a receiving server would: Arabic subject round-trips,
+      HTML body byte-identical in UTF-8, attachments byte-intact, certificates verified. What this
+      manual item still adds is only the network hop and the recipient's renderer.
 - [ ] **Link WhatsApp, send one group message, collect** — it appears as a report.
       *Needs:* Node.js on `PATH`; a first run that installs the Baileys bridge deps (allow up to
       600s); **a second device** — a phone with WhatsApp to scan the QR; and the group's JID mapped

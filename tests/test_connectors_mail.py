@@ -201,5 +201,91 @@ class SendReportSurfacesTheCauseTests(unittest.TestCase):
         self.assertIn("مستلمون", msg)
 
 
+class SentMessageWireFormatTests(unittest.TestCase):
+    """What actually goes on the wire.
+
+    Delivery to a remote host is the one thing a test cannot do, but it is
+    also not where this breaks. The real risk is the message marsad *builds*:
+    an Arabic subject that arrives as mojibake, an HTML body mangled by the
+    wrong charset, or an attachment corrupted in transfer encoding. Those are
+    all verifiable by capturing the bytes handed to sendmail and parsing them
+    back with the stdlib email package — which is exactly what a receiving
+    server does.
+
+    Verified against a real analysis result before being written down.
+    """
+
+    def _send(self, html, attachments=()):
+        import connectors
+        captured = {}
+
+        class CapturingSMTP:
+            def __init__(self, host, port, timeout=None):
+                captured["target"] = (host, port)
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def starttls(self, context=None): captured["tls"] = context
+            def login(self, u, p): captured["login"] = u
+            def sendmail(self, frm, to, raw):
+                captured.update(frm=frm, to=to, raw=raw)
+
+        conn = connectors.EmailConnector({
+            "email_user": "pmo@ltt.example", "email_password": "x",
+            "smtp_host": "smtp.example", "smtp_port": 587})
+        with mock.patch.object(connectors.smtplib, "SMTP", CapturingSMTP):
+            ok, msg = conn.send_report(["boss@ltt.example"],
+                                       "تقرير حالة المشروع — مرصد",
+                                       html, list(attachments))
+        self.assertTrue(ok, msg)
+        return captured
+
+    def _parsed(self, captured):
+        import email
+        return email.message_from_bytes(captured["raw"])
+
+    def test_the_arabic_subject_survives_a_round_trip(self):
+        from email.header import decode_header, make_header
+        m = self._parsed(self._send("<p>مرحبا</p>"))
+        self.assertEqual(str(make_header(decode_header(m["Subject"]))),
+                         "تقرير حالة المشروع — مرصد")
+
+    def test_the_html_body_arrives_byte_identical_in_utf8(self):
+        html = "<p>تقرير الحالة — ٨٠٪ مكتمل</p>"
+        m = self._parsed(self._send(html))
+        part = [p for p in m.walk() if p.get_content_type() == "text/html"][0]
+        self.assertEqual(part.get_content_charset(), "utf-8")
+        decoded = part.get_payload(decode=True).decode(part.get_content_charset())
+        self.assertEqual(decoded, html)
+
+    def test_attachments_arrive_byte_intact(self):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        blob = os.urandom(5000)                     # binary, not text
+        p = os.path.join(d, "تقرير.pdf")
+        with open(p, "wb") as fh:
+            fh.write(blob)
+        m = self._parsed(self._send("<p>x</p>", [p]))
+        got = [q for q in m.walk() if q.get_filename()]
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0].get_payload(decode=True), blob)
+
+    def test_a_missing_attachment_is_skipped_not_fatal(self):
+        captured = self._send("<p>x</p>", ["/nonexistent/report.pdf"])
+        m = self._parsed(captured)
+        self.assertEqual([q.get_filename() for q in m.walk() if q.get_filename()], [])
+
+    def test_the_transport_verifies_certificates(self):
+        import ssl
+        captured = self._send("<p>x</p>")
+        self.assertEqual(captured["tls"].verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(captured["tls"].check_hostname)
+
+    def test_envelope_matches_the_headers(self):
+        captured = self._send("<p>x</p>")
+        m = self._parsed(captured)
+        self.assertEqual(captured["frm"], m["From"])
+        self.assertEqual(captured["to"], ["boss@ltt.example"])
+        self.assertIn("boss@ltt.example", m["To"])
+
 if __name__ == "__main__":
     unittest.main()
