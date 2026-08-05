@@ -12,7 +12,3 @@ openpyxl>=3.1       # Excel export + reading ERP .xlsx inputs
 PyPDF2>=3.0         # extract text from PDF email/ERP attachments (optional at runtime)
 python-docx>=1.1    # read Word .docx field reports (upload + ERP folder)
 qrcode>=7.4         # WhatsApp link QR rendered in-app (matrix only, no PIL)
-fastapi>=0.110      # Qt-free web API (optional alternate interface)
-uvicorn[standard]>=0.27  # ASGI server for the API
-python-multipart>=0.0.9  # FastAPI UploadFile parsing for POST /api/reports/files
-httpx>=0.27         # required by fastapi.testclient (tools/test_api.py, tests/)
