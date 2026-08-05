@@ -5,7 +5,7 @@ Run this before tagging any version. Every automated item below was green on the
 
 ## Automated
 
-- [ ] `python3 -m unittest discover -s tests -v` — 171 tests, all pass
+- [ ] `python3 -m unittest discover -s tests -v` — 179 tests, all pass
 - [ ] `QT_QPA_PLATFORM=offscreen python3 tools/capture_qt.py docs/screenshots` — six PNGs, and stderr free of `QML ERROR`, `ReferenceError`, `TypeError` and `Unable to assign`. Open `2-dashboard.png`: no toast across the bottom, and the lower half populated. `reports/latest.json` must be byte-identical afterwards — the harness seeds its demo result in memory only.
 - [ ] `pyinstaller --noconfirm marsad.spec` — completes, `dist/marsad/` exists
 - [ ] `git ls-files | grep -E "settings\.json$|contacts\.json$|^reports/|^logs/|^uploads/"` — no output
@@ -31,8 +31,11 @@ than discovering it mid-pass.
       too slow; only the second is a hardware problem rather than a config one.
 - [ ] **Upload one `.docx`, one `.xlsx` and one `.pdf`** — all three appear with the right department.
       *Needs: nothing else. Performable now.*
-- [ ] **Run an analysis end to end against a real model** — the dashboard fills and the app
-      navigates to it. *Needs: the same backend as «اختبار المحرّك».* On a backend where every
+- [x] **Run an analysis end to end against a real model** — done 2026-08-05: 11/11 agents,
+      159s, no errors; PDF/Excel/HTML exported from that result and inspected. It caught a
+      real defect no fixture could — multi-line Arabic in the PDF rendered bottom-to-top.
+      Re-run this on any release that touches the engine or the exporters.
+      *Needs: a backend that answers within `ai_timeout`.* On a backend where every
       agent times out, the run now reports failure honestly (red progress track, «لم ينجح أي
       وكيل», no navigation) instead of claiming success — that path is worth confirming too.
 - [ ] **Export PDF and Excel** — both open, Arabic reads right-to-left, no `%%` or `None%`,
