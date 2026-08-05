@@ -303,7 +303,7 @@ class AppController(QObject):
         from PySide6.QtWidgets import QFileDialog
         paths, _ = QFileDialog.getOpenFileNames(
             None, "اختر ملفات التقارير", "",
-            "مستندات (*.xlsx *.xls *.csv *.pdf *.txt *.json *.docx);;كل الملفات (*)")
+            "مستندات (*.xlsx *.csv *.pdf *.txt *.json *.docx);;كل الملفات (*)")
         if paths:
             self.addFiles(paths)
 

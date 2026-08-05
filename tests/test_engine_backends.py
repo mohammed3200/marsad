@@ -46,6 +46,14 @@ class BackendRequestShapeTests(unittest.TestCase):
             "azure":  ({"choices": [{"message": {"content": GOOD}}]},
                        "https://x.openai.azure.com/openai/deployments/dep/"
                        "chat/completions?api-version=2024-06-01"),
+            # Gemini was missing from this table entirely. Its success path —
+            # the URL it builds and the four-level unwrap of its response —
+            # had never executed, in a test or against the real service. A
+            # typo anywhere in `candidates[0].content.parts[0].text` passed
+            # the whole suite.
+            "gemini": ({"candidates": [{"content": {"parts": [{"text": GOOD}]}}]},
+                       "https://generativelanguage.googleapis.com/v1beta/models/"
+                       "gm:generateContent?key=gk"),
         }
         for backend, (body, url) in cases.items():
             with self.subTest(backend=backend):

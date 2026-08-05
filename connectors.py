@@ -324,24 +324,6 @@ class WhatsAppHelper:
     الاتصال الفعلي يتم عبر Node.js Baileys (ملف منفصل)
     """
 
-    SETUP_STEPS = [
-        "① تأكد من تثبيت Node.js من nodejs.org",
-        "② في مجلد التطبيق شغّل: npm install @whiskeysockets/baileys express pino",
-        "③ شغّل: node whatsapp_bridge.js",
-        "④ ستظهر QR Code في نافذة CMD",
-        "⑤ افتح واتساب → ⋮ → الأجهزة المرتبطة → ربط جهاز",
-        "⑥ امسح QR Code بكاميرا هاتفك",
-        "⑦ الاتصال يبقى نشطاً طالما الهاتف متصل بالإنترنت",
-    ]
-
-    GROUP_SETUP = [
-        "① أنشئ مجموعة واتساب لكل قسم (RAN, Core, الجودة...)",
-        "② أضف رقم الهاتف المرتبط بالنظام لكل مجموعة",
-        "③ عند وصول أي رسالة في المجموعة يستقبلها النظام",
-        "④ يمكن إرسال: نص عادي، صورة ميدانية، ملف PDF",
-        "⑤ النظام يتعرف على القسم من اسم المجموعة أو رقم المرسل",
-    ]
-
     WHATSAPP_BRIDGE_JS = """\
 // whatsapp_bridge.js
 // شغّله بـ: node whatsapp_bridge.js
@@ -447,30 +429,6 @@ app.listen(PORT, () => console.log('[WA Bridge] يعمل على', PORT))
         except Exception as e:
             log.warning("node.js version check failed: %s", e, exc_info=True)
             return False, friendly_fs_error(e)
-
-    @staticmethod
-    def install_packages() -> bool:
-        """تثبيت حزم Node.js المطلوبة"""
-        import subprocess
-        bridge_dir = Path(__file__).parent
-        pkg_json   = bridge_dir / "package.json"
-        if not pkg_json.exists():
-            with open(pkg_json, "w") as f:
-                json.dump({
-                    "name": "ltt-wa-bridge",
-                    "version": "1.0.0",
-                    "type": "module",
-                    "dependencies": {
-                        "@whiskeysockets/baileys": "^6.7.0",
-                        "express"               : "^4.18.0",
-                        "node-fetch"            : "^3.3.0",
-                        "pino"                  : "^8.0.0"
-                    }
-                }, f, indent=2)
-        r = subprocess.run(["npm", "install"],
-                           cwd=str(bridge_dir),
-                           capture_output=True, text=True)
-        return r.returncode == 0
 
 
 # ════════════════════════════════════════════════════
@@ -589,7 +547,7 @@ class WhatsAppReceiver:
 # Shared file reader — used by the ERP watcher and manual upload
 # ════════════════════════════════════════════════════
 # الامتدادات المدعومة كتقارير ميدانية
-DOC_PATTERNS = ["*.xlsx", "*.xls", "*.csv", "*.json", "*.txt", "*.pdf", "*.docx"]
+DOC_PATTERNS = ["*.xlsx", "*.csv", "*.json", "*.txt", "*.pdf", "*.docx"]
 
 
 def is_internal_file(fpath) -> bool:
@@ -720,7 +678,7 @@ def _reader_error(exc: Exception) -> str:
     return "تعذّر فهم محتوى الملف"
 
 
-def _read_excel(fpath: Path) -> str:
+def _read_excel(fpath: Path):
     try:
         import openpyxl
         wb   = openpyxl.load_workbook(fpath, read_only=True, data_only=True)
@@ -735,10 +693,11 @@ def _read_excel(fpath: Path) -> str:
                     rows.append(line)
         return "\n".join(rows)
     except ImportError:
-        return "[يحتاج مكتبة openpyxl — pip install openpyxl]"
+        log.error("openpyxl غير مثبّتة — تعذّرت قراءة %s", fpath.name)
+        return None
     except Exception as e:
-        log.warning(f"فشل قراءة Excel ({fpath.name}): {e}")
-        return f"[خطأ في قراءة Excel: {_reader_error(e)}]"
+        log.warning(f"فشل قراءة Excel ({fpath.name}): {_reader_error(e)}")
+        return None
 
 
 def _read_csv(fpath: Path) -> str:
@@ -757,34 +716,36 @@ def _read_json(fpath: Path) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)[:5000]
 
 
-def _read_pdf(fpath: Path) -> str:
+def _read_pdf(fpath: Path):
     try:
         import PyPDF2
         with open(fpath, "rb") as f:
             reader = PyPDF2.PdfReader(f)
             return _cap("\n".join(p.extract_text() or "" for p in reader.pages))
     except ImportError:
-        return "[يحتاج مكتبة PyPDF2 — pip install PyPDF2]"
+        log.error("PyPDF2 غير مثبّتة — تعذّرت قراءة %s", fpath.name)
+        return None
     except Exception as e:
-        log.warning(f"فشل قراءة PDF ({fpath.name}): {e}")
-        return f"[خطأ في PDF: {_reader_error(e)}]"
+        log.warning(f"فشل قراءة PDF ({fpath.name}): {_reader_error(e)}")
+        return None
 
 
-def _read_docx(fpath: Path) -> str:
+def _read_docx(fpath: Path):
     try:
         import docx
         doc = docx.Document(str(fpath))
         return _cap("\n".join(p.text for p in doc.paragraphs if p.text.strip()))
     except ImportError:
-        return "[يحتاج مكتبة python-docx — pip install python-docx]"
+        log.error("python-docx غير مثبّتة — تعذّرت قراءة %s", fpath.name)
+        return None
     except Exception as e:
-        log.warning(f"فشل قراءة Word ({fpath.name}): {e}")
-        return f"[خطأ في Word: {_reader_error(e)}]"
+        log.warning(f"فشل قراءة Word ({fpath.name}): {_reader_error(e)}")
+        return None
 
 
 def read_file_to_report(fpath, source: str = "upload",
                         dept: str = None, from_label: str = None) -> dict | None:
-    """قراءة ملف واحد وتحويله إلى تقرير — يدعم xlsx/xls/csv/json/txt/pdf/docx.
+    """قراءة ملف واحد وتحويله إلى تقرير — يدعم xlsx/csv/json/txt/pdf/docx.
     يُعيد None للامتدادات غير المدعومة أو المحتوى الفارغ أو ملفات التطبيق الداخلية."""
     fpath = Path(fpath)
     if is_internal_file(fpath):
@@ -793,7 +754,7 @@ def read_file_to_report(fpath, source: str = "upload",
     ext   = fpath.suffix.lower()
     dept  = dept or guess_dept(fpath.name)
 
-    if ext in (".xlsx", ".xls"):
+    if ext == ".xlsx":
         content = _read_excel(fpath)
     elif ext == ".csv":
         content = _read_csv(fpath)
@@ -827,7 +788,7 @@ def read_file_to_report(fpath, source: str = "upload",
 class ERPConnector:
     """
     يراقب مجلداً محدداً ويقرأ ملفات ERP تلقائياً
-    يدعم: Excel (.xlsx/.xls), CSV, JSON, TXT, PDF, Word (.docx)
+    يدعم: Excel (.xlsx), CSV, JSON, TXT, PDF, Word (.docx)
     """
 
     def __init__(self, watch_folder: str = "", dept_map: dict = None):

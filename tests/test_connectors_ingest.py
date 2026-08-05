@@ -149,6 +149,31 @@ class IngestTests(unittest.TestCase):
         (self.dir / "empty.txt").write_text("", encoding="utf-8")
         self.assertIsNone(read_file_to_report(self.dir / "empty.txt"))
 
+    def test_a_corrupt_file_is_rejected_not_narrated(self):
+        """An unreadable file must not become a report.
+
+        The readers used to return their error message as the content — a
+        truthy Arabic string that sailed past the `if not content` guard. The
+        file then entered the queue and was passed verbatim to the AI engine
+        by _format_reports, so the model was asked to analyse
+        «[خطأ في قراءة Excel: الملف تالف…]» as if it were a field report.
+        """
+        for name, blob in (("broken.xlsx", b"not a zip file at all"),
+                           ("broken.docx", b"neither is this"),
+                           ("broken.pdf",  b"%PDF-1.4 truncated")):
+            with self.subTest(name=name):
+                p = self.dir / name
+                p.write_bytes(blob)
+                self.assertIsNone(read_file_to_report(p))
+
+    def test_a_legacy_xls_is_not_advertised(self):
+        """openpyxl cannot read the legacy BIFF format, so claiming .xls in
+        DOC_PATTERNS and the file picker promised something that always
+        failed. Better to not offer it than to offer it broken."""
+        import connectors
+        self.assertNotIn("*.xls", connectors.DOC_PATTERNS)
+        self.assertIn("*.xlsx", connectors.DOC_PATTERNS)
+
     def test_internal_files_can_never_be_ingested(self):
         from core.paths import BUNDLE_DIR, DATA_DIR
         for path in (DATA_DIR / "settings.json",
