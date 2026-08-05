@@ -69,7 +69,7 @@ every layer. Changing an agent's output schema means updating its consumers (`co
 a `whatsapp` report), `ConnectorHub` (`collect_all()` facade + `start_whatsapp(port)`),
 `build_report_html()`. Shared module-level `read_file_to_report(path, source, dept, from_label)` +
 `guess_dept()` + `DOC_PATTERNS` turn one file into a report dict — used by both the ERP watcher and the
-input-page upload button. Supported: `.xlsx/.xls/.csv/.json/.txt/.pdf/.docx` (Word needs `python-docx`;
+input-page upload button. Supported: `.xlsx/.csv/.json/.txt/.pdf/.docx` (Word needs `python-docx`;
 Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string if its lib is missing).
 
 **`backend/`** — the Qt/QML bridge:
@@ -81,7 +81,7 @@ Excel `openpyxl`; PDF `PyPDF2` — each degrades to an Arabic placeholder string
   `reportDate`, `engineOnline/Status`, `busy`, `testing`/`testingEngine`/`testingEmail`, `agentCount`,
   `settings` (notifying — `settingsChanged`),
   `agentsModel`, `reportsModel`, `reportCount`. Slots:
-  `runAnalysis`, `loadSamples`, `collectReports`, `addReport`, `addFiles` (upload picked files),
+  `runAnalysis`, `collectReports`, `addReport`, `addFiles` (upload picked files),
   `clearDashboard`, `pickReportFiles`/`pickErpFolder` (native `QFileDialog` — the app uses `QApplication`
   so file/folder pickers work without the fragile `QtQuick.Dialogs` QML module), `goTo(index)` (+
   `navRequested` signal so empty-state quick-actions switch pages), `exportPdf/Excel`, `openReportsFolder`,
@@ -111,7 +111,6 @@ markers; the bundled fonts contain no symbol glyphs, so never use Unicode symbol
   **Gitignored** (holds real addresses); `settings.example.json` ships as the template.
 - `data/contacts.json` — org structure + employees (authoritative; gitignored).
 - `reports/latest.json` — most recent analysis, loaded on startup to repopulate the dashboard.
-- `sample_reports.json` — demo input loaded via "تحميل نماذج".
 - `assets/fonts/` — bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL), loaded at startup.
 
 ## Conventions

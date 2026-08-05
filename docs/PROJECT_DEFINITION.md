@@ -32,8 +32,10 @@ Hard context facts that shape everything else:
   on screen. The PDF exporter is the exception: reportlab shapes nothing itself, so
   `core/exporters.py` requires `arabic-reshaper` + `python-bidi`.
 - **Local-first.** Everything runs on one machine: the LLM can be a local Ollama server
-  (the default) or a cloud API key; the WhatsApp receiver and web API bind to `127.0.0.1`.
-- **Single-user desktop app** that grew a headless API. There is no auth, no multi-tenancy,
+  (the default) or a cloud API key; the WhatsApp receiver binds to `127.0.0.1`.
+  The one exception is the optional WhatsApp bridge, a Baileys client that connects out to
+  WhatsApp's own servers — see README's Data & privacy section.
+- **Single-user desktop app.** There is no auth, no multi-tenancy,
   no database — JSON files on disk are the store.
 
 ## 2. Architecture map
@@ -45,8 +47,6 @@ sit on top.
 ```
 ┌──────────────────────────── Presentation layers ───────────────────────────┐
 │  app.py + backend/ + qml/   PySide6 / Qt Quick (QML) desktop UI — production│
-│  api/                       FastAPI REST + WebSocket backend (Qt-free);     │
-│                             experimental, not shipped — gated by an env var │
 ├──────────────────────────── UI-agnostic core ──────────────────────────────┤
 │  core/engine.py      AIEngine (5 LLM backends) + AgentsEngine (11 agents)   │
 │  core/exporters.py   PDF (reportlab) + Excel (openpyxl) report generation   │
@@ -60,7 +60,7 @@ sit on top.
 │  backend/ (Qt bridge) · qml/ (declarative UI) · assets/fonts (bundled TTFs) │
 │  tests/ (stdlib unittest) — isolated_state() keeps it off real user data    │
 │  tools/ (screenshots, API smoke test, deb build) · packaging/ (deb, NSIS)   │
-│  marsad.spec / marsad_api.spec (PyInstaller) · .github/workflows (CI)       │
+│  marsad.spec (PyInstaller) · .github/workflows (CI)                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -69,12 +69,10 @@ sit on top.
 | Path | Role |
 |---|---|
 | `app.py` | Qt entry point: `QApplication` (RTL) → bundled fonts → `Theme` + `AppController` context props → `QQuickView` loads `qml/Main.qml` |
-| `run_api.py` | Convenience API launcher (same as `python -m api`); used by PyInstaller |
 | `core/` | UI-agnostic logic. **No Qt imports allowed** |
 | `connectors.py` | All ingestion + outbound email (also UI-agnostic) |
 | `backend/` | Qt bridge: `theme.py` (design tokens), `controller.py` (`AppController` — the object QML talks to), `analysis_worker.py` (QThread), `models.py` (list models), `settings_bridge.py` (settings load/save) |
 | `qml/` | Flat QML tree: `Main.qml` shell + 6 pages + flat primitives; files auto-import each other by filename |
-| `api/` | Qt-free web backend: `app.py` (FastAPI routes + WS), `services.py` (`AppService` — mirrors `AppController` without Qt), `__main__.py` (uvicorn launcher), `README.md` (contract doc). **Not shipped in this release** — `app.py` refuses to import unless `MARSAD_API_ENABLE=1` is set; no build in CI produces an API bundle |
 | `tests/` | Unit + integration test suite (stdlib `unittest`, no extra dependency). `_isolation.py::isolated_state()` redirects every writable-state module global into a temp dir — every test file uses it so the suite never touches the real `settings.json`, `reports/`, or `data/` |
 | `assets/fonts/` | Bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL) |
 | `assets/marsad.png`, `marsad.ico` | Brand mark |
@@ -82,9 +80,8 @@ sit on top.
 | `reports/` | Analysis output: `results_<ts>.json`, `latest.json`, exported PDF/XLSX (gitignored) |
 | `uploads/`, `logs/` | Runtime output (gitignored) |
 | `settings.json` / `settings.example.json` | Live config (gitignored) / shipped template |
-| `sample_reports.json` | Demo input loaded via «تحميل نماذج» |
 | `whatsapp_bridge.js` + `package.json` | **Generated** Node bridge (gitignored) + its npm manifest |
-| `tools/` | `capture_qt.py` (offscreen QML screenshots), `test_api.py` (API smoke), `build_linux.sh` |
+| `tools/` | `capture_qt.py` (offscreen QML screenshots), `capture_wa_dialog.py`, `build_linux.sh` |
 | `packaging/linux`, `packaging/windows` | `.deb` build script + `.desktop` file; NSIS installer script (CI-only) |
 | `docs/screenshots/` | Captured UI screenshots |
 
@@ -94,8 +91,8 @@ The product surface is six pages plus background services. (QML page names given
 exposes the same capabilities over REST — see §7.)
 
 ### 3.1 إدخال البيانات (Data input) — `qml/InputPage.qml`
-- Load demo reports from `sample_reports.json` («تحميل نماذج تجريبية»).
-- Upload files (`.xlsx/.xls/.csv/.json/.txt/.pdf/.docx`); each parsed into a report dict.
+- Upload files (`.xlsx/.csv/.json/.txt/.pdf/.docx`); each parsed into a report dict.
+  An unreadable file is rejected outright rather than entering the queue as an error string.
 - «جمع من المصادر» — one-shot collection from email + ERP folder + buffered WhatsApp.
 - Manual entry form: department combo, author, date, free-text content.
 - Queue list with per-row delete and «مسح الكل»; live count «{n} تقرير في القائمة».
@@ -222,20 +219,6 @@ Both UIs follow the same rule: **no blocking I/O on the UI/main thread.**
 - **Qt app**: results cross back as Qt signals (`notify`, `progress`, `logMessage`,
   `agentState`, `dashModelChanged`, …) which are thread-safe queued deliveries
   (`backend/controller.py`).
-- **API**: `AppService` (`api/services.py`) is a Qt-free mirror of the controller — same
-  state, same guard flags, same Arabic notify strings — with a pub/sub event bus
-  (`subscribe(cb)`, `_emit(type, **payload)`). `api/app.py` forwards every event to all
-  WebSocket clients (`/ws`), hopping onto the asyncio loop with
-  `loop.call_soon_threadsafe` since events fire on daemon threads. On connect, a client
-  receives one `state_snapshot` then the live event stream:
-
-  `notify{message}` · `log{message}` · `progress{percent}` ·
-  `agent_state{agent_id,state}` · `reports_changed{count,reports}` ·
-  `dash_changed{dash,date,has_results}` · `analysis_done` / `analysis_failed{error}` ·
-  `connection_tested{ok,message}` / `email_tested{ok,message}` ·
-  `export_done{path}` / `export_failed{error}` · `testing{engine,email,active}` ·
-  `busy{busy}` · `engine_changed{online,status}` · `settings_changed` ·
-  `models_fetched{ok,models,message}` · `wa_qr{matrix}` · `wa_status{linked,phone,starting}`
 
 ### 4.5 Settings lifecycle
 
@@ -243,7 +226,7 @@ Both UIs follow the same rule: **no blocking I/O on the UI/main thread.**
   `settings.example.json` → built-in `_DEFAULTS` (first existing file wins); `save_settings()`
   writes the merged dict back to `DATA_DIR/settings.json`.
 - **Connectors snapshot settings at construction.** Therefore both UIs rebuild the
-  `ConnectorHub` on every save (`saveSettings` / `PUT /api/settings`) so new credentials
+  `ConnectorHub` on every save (`saveSettings`) so new credentials
   take effect immediately; the WhatsApp receiver restarts only if enabled.
 - **Engine profiles**: named snapshots of the 15 engine keys (`ENGINE_KEYS` —
   `backend/controller.py:27`): `ai_backend, ai_timeout, ollama_url, ollama_model,
@@ -275,7 +258,7 @@ ERP folder scan              │ report dicts  │    │ AgentsEngine     │  
 WhatsApp bridge POST    ───► │ (in-memory    ───►│ 10 workers ──────┼────►│ export_pdf      │
 File upload (picker/API)     │  list, UI/     │    │  chief           │     │ export_excel    │
 Manual entry                 │  service-owned)│   │ results dict     │     │ build_report_   │
-«تحميل نماذج» (samples)      └───────────────┘    └──────┬───────────┘     │  html → SMTP    │
+                            └───────────────┘    └──────┬───────────┘     │  html → SMTP    │
                                                          │                 └─────────────────┘
                                                          ▼
                                           reports/results_<ts>.json
@@ -357,8 +340,8 @@ with exactly these shapes:
 ### 6.3 Fixed vocabularies (shared across prompts, routing, and UI colors)
 
 - **Agent ids / order**: `ops, quality, safety, civil, cost, contract, procure, supply,
-  risk, schedule` + `chief` (`WORKER_AGENTS`, `AGENT_ORDER` in `api/services.py:45`).
-  Arabic display names are fixed (`AGENT_NAMES`, `api/services.py:32`).
+  risk, schedule` + `chief` (`WORKER_AGENTS` in `core/engine.py`).
+  Arabic display names are fixed (`AGENT_NAMES`, `backend/models.py`).
 - **Dept keys**: `ran, core, quality, safety, civil, supply, cost, pmo, contract, procure,
   hr, risk, it, admin` (see `settings.example.json` maps and `DEPT_KEY_MAP` in
   `core/contacts.py`).
@@ -395,30 +378,6 @@ Full reference (defaults in `backend/settings_bridge.py:13-48`, template in
 Seed structure: three top departments (الإدارة الفنية / التشغيلية، الإدارة المالية،
 الإدارة الإدارية) with their sub-departments (`data/contacts.json`).
 
-### 6.6 REST API surface (`api/app.py`, prefix `/api`)
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/meta` | today label (dual Hijri·Gregorian), backend, engine status, reports dir |
-| `GET/PUT /api/settings` | read / merge-save settings (+ hub rebuild) |
-| `POST /api/settings/test/engine` · `…/test/email` | start async tests → result over WS |
-| `POST /api/settings/models` | start async provider model-list fetch → `models_fetched` over WS |
-| `GET /api/engine/profiles` · `POST …/save` · `POST …/switch` · `DELETE …/{name}` | engine profiles |
-| `GET /api/reports` · `POST /api/reports` · `DELETE /api/reports/{i}` · `DELETE /api/reports` | queue CRUD |
-| `POST /api/reports/samples` · `…/collect` · `…/files` (multipart) | load samples / collect sources / upload |
-| `POST /api/analysis/run` | start the fleet (400 no reports, 409 busy) |
-| `GET /api/dashboard` · `DELETE /api/dashboard` | read / clear the chief dashboard |
-| `GET /api/exports` · `GET /api/exports/{name}` | list / download generated PDF-XLSX (path-traversal safe) |
-| `GET /api/recipients` | current report recipients |
-| `GET /api/contacts/structure` · `GET …/employees` · `POST/PUT/DELETE …/employees[/{id}]` · `POST …/sync` | contacts |
-| `POST /api/export/pdf` · `POST /api/export/excel` | generate + download |
-| `POST /api/email/send` | send HTML report via SMTP |
-| `POST /api/whatsapp/bridge` · `GET /api/whatsapp/node` · `POST /api/whatsapp/link` | generate bridge / check Node / start bridge (QR+status over WS) |
-| `WS /ws` | `state_snapshot` on connect, then the full event stream (§4.4) |
-| `GET /api/docs` | interactive OpenAPI docs |
-
-Interactive docs at `/api/docs`; the full contract is also documented in `api/README.md`.
-
 ## 7. External integrations
 
 | Integration | How | Where |
@@ -451,7 +410,7 @@ only blank templates ship in git.
 
 ## 9. Security model
 
-- **Loopback only**: the WhatsApp receiver and the FastAPI server bind `127.0.0.1` —
+- **Loopback only**: the WhatsApp receiver binds `127.0.0.1` —
   nothing is exposed to the LAN. That covers *inbound* only. Outbound, the app reaches
   the configured LLM provider, the configured mail server, and — once the user starts the
   WhatsApp bridge — WhatsApp's own servers, since the bridge is a Baileys WhatsApp Web
@@ -464,7 +423,7 @@ only blank templates ship in git.
   `settings.example.json` (blank) ships.
 - **Internal-file guard**: `is_internal_file()` keeps config/credential files out of the
   report queue on every ingestion path.
-- **Export download confinement**: `/api/exports/{name}` validates basename + extension and
+- **Export download confinement**: `AppController.openFile` validates basename + extension and
   resolves inside the reports dir (no traversal); the Qt `openFile` is likewise confined.
 - **Error hygiene**: raw provider HTTP bodies / exception strings never reach the UI —
   they are classified into short Arabic by `friendly_error()`; raw detail goes to `logs/`.
@@ -515,7 +474,6 @@ A new UI or framework must preserve these, or the system breaks:
 |---|---|
 | `core/` + `connectors.py` | Complete, production-proven |
 | Qt/QML desktop app (`app.py` + `backend/` + `qml/`) | Complete — the production UI |
-| FastAPI backend (`api/`) | **Not shipped this release.** A REST + WS mirror of the controller, but `api/app.py` refuses to import without `MARSAD_API_ENABLE=1`, it has no authentication, and several concurrency defects fixed on the desktop side remain open here. See the known-limitations list in `docs/RELEASE_CHECKLIST.md` |
 | Web frontend | **Does not exist.** A React web UI was considered and dropped; no `web/` directory has ever existed in this repository |
 | Tests | `python3 -m unittest discover -s tests -v` — 112 tests, stdlib `unittest`, isolated from real user data by `tests/_isolation.py`. Plus `python3 tools/test_api.py` (7) and `tools/capture_qt.py` for QML screenshots. No linter; CI does not yet run the suite |
 | Packaging | PyInstaller specs (desktop `marsad.spec`, API `marsad_api.spec`), Linux `.deb`, Windows NSIS (CI on `v*` tags) |

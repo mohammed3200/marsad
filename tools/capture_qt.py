@@ -15,6 +15,7 @@ produced before:
    of the shot empty. DEMO_CHIEF below is assigned in memory only. Nothing
    here writes to the user's reports/, and the real latest.json is left alone.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from PySide6.QtGui import QGuiApplication, QFontDatabase
 from PySide6.QtQuick import QQuickView
 from PySide6.QtCore import Qt, QUrl, QTimer, QEventLoop
 
+from core.paths import BUNDLE_DIR
 from backend.theme import Theme
 from backend.controller import AppController
 
@@ -91,6 +93,22 @@ def main():
     load_fonts()
 
     theme, controller = Theme(), AppController()
+
+    # Swap in the SHIPPED defaults BEFORE Main.qml loads. SettingsPage fills
+    # its fields with `Component.onCompleted: text = ...`, which runs once at
+    # construction — overriding after setSource() leaves the old values on
+    # screen and marks the form dirty. Without this the README leaked the
+    # developer's own environment: the Ollama model name and server URL they
+    # happened to have configured. Read-only; settings.json is never written.
+    example = BUNDLE_DIR / "settings.example.json"
+    if example.exists():
+        with open(example, encoding="utf-8") as fh:
+            controller._settings = json.load(fh)
+
+    # The Reports page lists the real reports/ dir, which put the developer's
+    # own export filenames and timestamps in the README. Show it as a fresh
+    # install would: nothing exported yet.
+    controller._exports = []
     view = QQuickView()
     view.rootContext().setContextProperty("Theme", theme)
     view.rootContext().setContextProperty("app", controller)
