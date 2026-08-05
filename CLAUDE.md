@@ -32,12 +32,10 @@ DeepSeek/LM Studio), **gemini** (`gemini_api_key`/`gemini_model`), **azure** (`a
 `azure_api_key`/`azure_deployment`/`azure_api_version`).
 
 Tests: `python3 -m unittest discover -s tests -v` (112, stdlib unittest) and
-`python3 tools/test_api.py` (7). Every test runs inside
+Every test runs inside
 `tests/_isolation.py::isolated_state()` so the suite never touches the real
 `settings.json`, `reports/` or `data/`. No linter.
 
-`api/` is a Qt-free FastAPI mirror of `AppController`, **not shipped this release** — it
-raises on import unless `MARSAD_API_ENABLE=1` is set.
 
 ## Architecture
 

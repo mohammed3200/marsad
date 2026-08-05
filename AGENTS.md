@@ -29,13 +29,12 @@ Requires a running LLM backend — a local **Ollama** server (`ollama pull llama
 
 ```bash
 python3 -m unittest discover -s tests -v   # 112 tests, stdlib unittest, no extra dependency
-python3 tools/test_api.py                  # REST smoke suite (7 tests)
 ```
 
 Every test runs inside `tests/_isolation.py::isolated_state()`, which redirects each
 writable-state module global into a temp directory. **Nothing in `tests/` may touch the real
 `settings.json`, `reports/` or `data/`** — that rule is load-bearing, not stylistic: an earlier
-version of `tools/test_api.py` ran against the real data directory and destroyed a user's last
+version of a REST smoke suite ran against the real data directory and destroyed a user's last
 analysis when a run was interrupted. There is no linter. CI builds installers only; it does not
 yet run the suite.
 
@@ -68,8 +67,6 @@ app.py                 Qt entry — QApplication (RTL) → bundled fonts → The
 core/                  UI-agnostic logic (no Qt import allowed)
 connectors.py          Email / ERP / WhatsApp ingestion + outbound email
 backend/               Qt bridge — theme, controller, worker, models, settings
-api/                   Qt-free FastAPI backend — REST (/api) + WebSocket (/ws) over AppService.
-                       NOT SHIPPED this release: refuses to import without MARSAD_API_ENABLE=1
 tests/                  stdlib unittest suite; _isolation.py keeps it off real user data
 qml/                   Flat QML tree — Main + 6 pages + flat primitives
 assets/fonts/          Bundled Noto Kufi Arabic / Noto Sans Arabic / JetBrains Mono (OFL)
@@ -100,10 +97,6 @@ packaging/             linux/build_deb.sh + marsad.desktop · windows/marsad.nsi
 ### `qml/` — flat directory (files auto-import each other by filename)
 
 `Main.qml` (sidebar shell + `StackLayout` + a transient toast bound to `app.notify` — bottomMargin 78 so it clears the Settings save bar), six pages (`DashboardPage`, `InputPage`, `AnalysisPage`, `ReportsPage`, `SettingsPage`, `ContactsPage`), and flat primitives (`ReportSection` (+ optional trailing `note`), `MetricRow`, `ListRow`, `FormField` (password fields get a drawn eye visibility toggle), `FormCombo`, `AppButton`, `EmptyState`, `PageFrame` (+ optional sticky `footer` slot, zero-height when unset), `Glyph`). Navigation switches pages via `app.goTo(index)` + the `navRequested` signal. All font sizes come from `Theme.fs` — no hardcoded `pixelSize`.
-
-### `api/` — Qt-free web backend (FastAPI)
-
-`api/services.py::AppService` mirrors `AppController` without Qt (same state, guard flags, Arabic notify strings, daemon-thread model) and broadcasts plain event dicts to subscribers; `api/app.py` exposes them as REST (`/api`, interactive docs at `/api/docs`) + one WebSocket (`/ws` — `state_snapshot` on connect, then every event, including `models_fetched` / `wa_qr` / `wa_status`). Beyond the controller's surface it also serves: exports listing/download (`/api/exports[/name]`, reports-dir confined), recipients, engine profiles (`/api/engine/profiles*`), async provider model listing (`/api/settings/models`), and the WhatsApp bridge start (`/api/whatsapp/link`). Local-only: `python -m api` binds 127.0.0.1:`$MARSAD_PORT` (default 8765). **Not shipped in this release:** `api/app.py` raises on import unless `MARSAD_API_ENABLE=1` is set, it has no authentication, and several concurrency defects fixed on the desktop side remain open here — see the known-limitations list in `docs/RELEASE_CHECKLIST.md`. `GET /api/settings` redacts every secret, top-level and inside saved engine profiles. Full contract: `api/README.md`.
 
 ### There is no `web/` directory
 

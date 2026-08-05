@@ -34,7 +34,7 @@ the first analysis runs.
 - **Five AI providers** — Ollama, Claude, OpenAI (+ any OpenAI-compatible endpoint: OpenRouter, Groq,
   Together, DeepSeek, LM Studio), Google Gemini, and Azure OpenAI. Settings shows only the selected
   provider's fields; a configurable request timeout and a per-provider connection test are built in.
-- **File upload from the app** — a native picker adds `xlsx · xls · csv · pdf · txt · json · docx`
+- **File upload from the app** — a native picker adds `xlsx · csv · pdf · txt · json · docx`
   reports directly; Word support added.
 - **All sources configured in the UI** — email (IMAP/SMTP), ERP folder, and a real WhatsApp receiver are
   set up from the Settings tab, no manual `settings.json` editing.
@@ -135,23 +135,6 @@ the NSIS installer + portable `.exe` (Windows) and the `.deb` (Linux) and attach
 An installed app keeps its config, reports, and contacts under a per-user data dir
 (`%APPDATA%/marsad`, `~/.local/share/marsad`).
 
-### Web API — experimental, does not ship
-
-`api/` holds a Qt-free FastAPI mirror of `AppController`. **It is not part of this release.**
-`api/app.py` refuses to import unless `MARSAD_API_ENABLE=1` is set, so `python3 -m api` and
-`python3 run_api.py` both raise on a normal checkout — deliberately.
-
-It is **unauthenticated**, unhardened, and has known defects that are deferred with it (no auth or
-CSRF, unlocked guard flags, an unordered WebSocket fan-out, no busy gate on `PUT /api/settings` or
-`sync_contacts`). Do not expose it beyond loopback, and do not treat it as a supported interface.
-`docs/RELEASE_CHECKLIST.md` lists the full set.
-
-The one command that works on a normal checkout is the offline endpoint check, which opts itself in:
-
-```bash
-python3 tools/test_api.py
-```
-
 ## Connect a backend
 
 Everything is configured from the **الإعدادات** (Settings) tab in the app — **no manual JSON editing**
@@ -174,7 +157,7 @@ tests whichever provider is selected.
 | Source | How to enable |
 |---|---|
 | **Manual entry** | Type/paste a report on the **إدخال البيانات** tab. |
-| **File upload** | «رفع ملفات» — pick `xlsx · xls · csv · pdf · txt · json · docx`. |
+| **File upload** | «رفع ملفات» — pick `xlsx · csv · pdf · txt · json · docx`. |
 | **Email (IMAP/SMTP)** | Fill the **البريد الإلكتروني** section (user, password, hosts, port, recipients), press «اختبار البريد», then «جمع من المصادر» pulls new mail. |
 | **ERP folder** | Point the **مجلد ERP** picker at a shared folder; any dropped file is read on «جمع من المصادر». |
 | **WhatsApp** | Enable it in Settings, «توليد ملف الجسر», then run the generated `whatsapp_bridge.js` once (`npm install && node whatsapp_bridge.js`, scan the QR). Group messages then flow in. **Receive-only** — marsad reads group messages, it never sends any. |
@@ -192,9 +175,7 @@ entered in the app sync their email/WhatsApp → department routing back into `s
 **مزامنة مع الإعدادات** button.
 
 - **Uploaded files** picked in the desktop app are read in place from wherever you picked them —
-  no copies are made. The experimental web API — which does not ship in this release, see above —
-  is different: files sent to `POST /api/reports/files` are saved under `uploads/api_<timestamp>/`
-  and kept there until you delete them. `uploads/` is gitignored either way.
+  no copies are made — marsad reads the file where you picked it and keeps no copy.
 - **WhatsApp session** — «توليد ملف الجسر» writes `whatsapp_bridge.js` (with the per-session
   `X-WA-Token`, also stored as `whatsapp_token` in `settings.json`), and running it creates
   `wa_session/` holding your live WhatsApp login. Both live under the per-user data dir

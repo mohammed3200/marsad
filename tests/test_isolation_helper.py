@@ -1,73 +1,77 @@
-"""Fix round 1, important finding 3: tests/_isolation.py's isolated_state()
-never restored api.app.DATA_DIR on the normal path.
+"""Tests the test infrastructure itself.
 
-api.app is typically imported *during* an isolated_state() block (that is
-the whole point of entering the helper before the first import), so at
-entry `sys.modules.get("api.app")` found nothing and the original code's
-entry-time snapshot was None — the restore in `finally` was gated on that
-snapshot being non-None and so was silently skipped. core.paths.DATA_DIR
-was correctly restored either way, so api.app.DATA_DIR (and any module
-constant derived from it at import time, e.g. api/app.py's _REPORTS_DIR)
-permanently diverged from core.paths.DATA_DIR for the rest of the process
-— a deleted temp directory. The reviewer confirmed this by running
-test_api_auth then test_api_uploads in one process.
+`isolated_state()` redirects module-level path globals into a temp dir. The
+subtle failure mode: a module that is first imported *during* the block is
+invisible to the entry-time `sys.modules` lookup, so the entry-time snapshot
+is None — and a restore gated on that snapshot silently no-ops. The module's
+globals then stay pinned to a temp directory that has been deleted, for the
+rest of the process, while `core.paths.DATA_DIR` is correctly restored. The
+two diverge and nothing notices.
 
-This module tests the test infrastructure itself, not application code, so
-it does not fit naturally into any of the existing per-feature test files.
+That bug shipped once, against the web API's module, and was found only by
+running two suites in one process. The API is gone; `backend.controller` has
+the identical shape — it computes REPORTS/LATEST_F/SAMPLES_F from DATA_DIR at
+import time, and entering the helper before importing it is the normal
+pattern. These tests hold that invariant.
 """
-import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
-os.environ["MARSAD_API_ENABLE"] = "1"
-
-from tests._isolation import isolated_state  # noqa: E402
+from tests._isolation import isolated_state
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class IsolationRestoreTests(unittest.TestCase):
-    def test_api_app_data_dir_matches_paths_data_dir_after_exit(self):
-        """The reviewer's prescribed invariant: whenever api.app is loaded,
-        its DATA_DIR must track core.paths.DATA_DIR once an isolated_state()
-        block has exited — never left pointing at a deleted temp dir."""
+
+    def test_controller_paths_track_data_dir_after_exit(self):
+        """Whenever backend.controller is loaded, its path globals must track
+        core.paths.DATA_DIR once the block has exited — never left pointing at
+        a deleted temp dir."""
         import core.paths as paths
-        real_data_dir = paths.DATA_DIR
+        real = paths.DATA_DIR
 
         with isolated_state() as root:
-            import api.app as api_app
-            self.assertEqual(api_app.DATA_DIR, root)
+            import backend.controller as ctrl
+            self.assertEqual(ctrl.DATA_DIR, root)
+            self.assertEqual(ctrl.REPORTS, root / "reports")
 
-        import api.app as api_app  # already loaded; re-import just binds the name
-        self.assertEqual(paths.DATA_DIR, real_data_dir)
-        self.assertEqual(api_app.DATA_DIR, paths.DATA_DIR)
+        import backend.controller as ctrl
+        self.assertEqual(paths.DATA_DIR, real)
+        self.assertEqual(ctrl.DATA_DIR, paths.DATA_DIR)
+        self.assertEqual(ctrl.REPORTS, paths.DATA_DIR / "reports")
 
-    def test_first_import_of_api_app_inside_the_block_still_restores(self):
-        """Reproduces the exact bug scenario in a fresh subprocess: api.app
-        is not yet imported when isolated_state() is entered — so the
-        entry-time sys.modules lookup finds nothing — and is only imported
-        *during* the block. This is the case the original code's entry-time
-        snapshot (captured before the import could happen) could not see,
-        so the restore silently no-op'd."""
+    def test_first_import_inside_the_block_still_restores(self):
+        """The exact bug scenario, in a fresh subprocess: the module is not
+        imported when isolated_state() is entered — so the entry-time lookup
+        finds nothing — and is imported only during the block."""
         script = (
-            "import os\n"
-            "os.environ['MARSAD_API_ENABLE'] = '1'\n"
             "from tests._isolation import isolated_state\n"
             "import core.paths as paths\n"
             "real = paths.DATA_DIR\n"
-            "with isolated_state():\n"
-            "    import api.app as api_app\n"
-            "assert api_app.DATA_DIR == paths.DATA_DIR, "
-            "(str(api_app.DATA_DIR), str(paths.DATA_DIR))\n"
+            "with isolated_state() as root:\n"
+            "    import backend.controller as ctrl\n"
+            "    assert ctrl.DATA_DIR == root, (str(ctrl.DATA_DIR), str(root))\n"
             "assert paths.DATA_DIR == real, (str(paths.DATA_DIR), str(real))\n"
+            "assert ctrl.DATA_DIR == paths.DATA_DIR, "
+            "(str(ctrl.DATA_DIR), str(paths.DATA_DIR))\n"
+            "assert ctrl.REPORTS == paths.DATA_DIR / 'reports', str(ctrl.REPORTS)\n"
             "print('OK')\n"
         )
-        proc = subprocess.run([sys.executable, "-c", script],
-                              capture_output=True, text=True, cwd=str(REPO_ROOT))
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, cwd=str(REPO_ROOT),
+            env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin:/bin",
+                 "HOME": str(Path.home())})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("OK", proc.stdout)
+
+    def test_the_helper_leaves_no_temp_root_behind(self):
+        with isolated_state() as root:
+            self.assertTrue(root.exists())
+        self.assertFalse(root.exists())
 
 
 if __name__ == "__main__":

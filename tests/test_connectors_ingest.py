@@ -185,5 +185,68 @@ class IngestTests(unittest.TestCase):
                 self.assertIsNone(read_file_to_report(path))
 
 
+# ── moved here when the web API was removed ────────────────────────────
+# These test connectors.py, not the API. They lived in
+# tests/test_api_uploads.py only because that file was written when the
+# upload endpoint was the thing under test; deleting it wholesale would
+# have silently dropped real coverage of the read caps.
+
+
+class ReadCapTests(unittest.TestCase):
+    """read_file_to_report writes no user state, so it needs no isolation."""
+
+    def _huge(self, name, text):
+        import tempfile
+        from pathlib import Path
+        p = Path(tempfile.mkdtemp()) / name
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def test_txt_content_is_capped(self):
+        import connectors
+        p = self._huge("ran_huge.txt", "ب" * (connectors.MAX_CHARS + 5000))
+        rep = connectors.read_file_to_report(p)
+        self.assertLessEqual(len(rep["content"]), connectors.MAX_CHARS + 200)
+        self.assertIn("اقتُطع", rep["content"])
+
+    def test_content_under_the_cap_is_untouched(self):
+        import connectors
+        body = "تقرير قصير عن الموقع"
+        p = self._huge("ran_small.txt", body)
+        rep = connectors.read_file_to_report(p)
+        self.assertEqual(rep["content"], body)
+        self.assertNotIn("اقتُطع", rep["content"])
+
+    def test_cap_helper_boundary(self):
+        import connectors
+        exact = "ب" * connectors.MAX_CHARS
+        self.assertEqual(connectors._cap(exact), exact)
+        over = "ب" * (connectors.MAX_CHARS + 1)
+        capped = connectors._cap(over)
+        self.assertTrue(capped.startswith("ب" * connectors.MAX_CHARS))
+        self.assertIn("اقتُطع", capped)
+
+    def test_cap_helper_tolerates_empty_and_none(self):
+        import connectors
+        self.assertEqual(connectors._cap(""), "")
+        self.assertEqual(connectors._cap(None), "")
+
+    def test_docx_content_is_capped(self):
+        import tempfile
+        from pathlib import Path
+        import connectors
+        try:
+            import docx
+        except ImportError:
+            self.skipTest("python-docx not installed")
+        p = Path(tempfile.mkdtemp()) / "ran_huge.docx"
+        d = docx.Document()
+        for _ in range(60):
+            d.add_paragraph("ب" * 1000)
+        d.save(p)
+        rep = connectors.read_file_to_report(p)
+        self.assertLessEqual(len(rep["content"]), connectors.MAX_CHARS + 200)
+        self.assertIn("اقتُطع", rep["content"])
+
 if __name__ == "__main__":
     unittest.main()
