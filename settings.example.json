@@ -30,29 +30,7 @@
   "whatsapp_enabled": false,
   "whatsapp_port": 5051,
 
-  "email_dept_map": {
-    "ran@example.com":         "ran",
-    "core@example.com":        "core",
-    "quality@example.com":     "quality",
-    "safety@example.com":      "safety",
-    "civil@example.com":       "civil",
-    "supply@example.com":      "supply",
-    "erp@example.com":         "cost",
-    "primavera@example.com":   "pmo",
-    "contracts@example.com":   "contract",
-    "procurement@example.com": "procure",
-    "hr@example.com":          "hr",
-    "pmo@example.com":         "pmo",
-    "risk@example.com":        "risk",
-    "it@example.com":          "it"
-  },
+  "email_dept_map": {},
 
-  "whatsapp_groups": {
-    "+100000000001": "ran",
-    "+100000000002": "core",
-    "+100000000003": "quality",
-    "+100000000004": "safety",
-    "+100000000005": "civil",
-    "+100000000006": "supply"
-  }
+  "whatsapp_groups": {}
 }

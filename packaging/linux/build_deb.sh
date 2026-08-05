@@ -38,7 +38,7 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: ${ARCH}
-Maintainer: LTT PMO <pmo@example.com>
+Maintainer: LTT PMO <mohammed3200@users.noreply.github.com>
 Installed-Size: ${INSTALLED_KB}
 Depends: libc6, libglib2.0-0, libegl1, libgl1, libxkbcommon0, libfontconfig1, libdbus-1-3
 Description: مرصد (marsad) — LTT 4G/5G project-management intelligence
